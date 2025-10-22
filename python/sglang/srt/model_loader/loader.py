@@ -82,6 +82,7 @@ def device_loading_context(module: torch.nn.Module, target_device: torch.device)
     original_device_states: Dict[str, torch.device] = {}
 
     # Store original device states and move parameters to GPU if they're on CPU
+    # 记录参数的原始设备位置，需要时临时迁移到目标设备以复用加载流程
     for name, p in module.named_parameters():
         if p.device.type == "cpu":
             original_device_states[name] = p.device
@@ -124,6 +125,7 @@ def _get_quantization_config(
 ) -> Optional[QuantizationConfig]:
     """Get the quantization config."""
     if model_config.quantization is not None:
+        # 根据模型/加载配置推导量化策略描述，后续据此加载权重
         quant_config = get_quant_config(
             model_config, load_config, packed_modules_mapping
         )
@@ -136,6 +138,7 @@ def _get_quantization_config(
             if major is not None and minor is not None:
                 assert 0 <= minor < 10
                 capability = major * 10 + minor
+                # 确保当前设备的算力门槛满足量化内核需求，提前给出友好报错
                 if capability < quant_config.get_min_capability():
                     raise ValueError(
                         f"The quantization method {model_config.quantization} "
@@ -144,6 +147,7 @@ def _get_quantization_config(
                         f"Current capability: {capability}."
                     )
         supported_dtypes = quant_config.get_supported_act_dtypes()
+        # 校验模型默认 dtype 是否被目标量化方案支持
         if model_config.dtype not in supported_dtypes:
             raise ValueError(
                 f"{model_config.dtype} is not supported for quantization "
@@ -162,6 +166,7 @@ def _initialize_model(
     model_class, _ = get_model_architecture(model_config)
     packed_modules_mapping = getattr(model_class, "packed_modules_mapping", {})
     if _is_npu:
+        # NPU 上的部分融合算子名称不同，这里调整映射让权重能正确对号入座
         packed_modules_mapping["fused_qkv_a_proj_with_mqa"] = [
             "q_a_proj",
             "kv_a_proj_with_mqa",

@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 @torch.compile(dynamic=True, backend=get_compiler_backend())
 def resolve_future_token_ids(input_ids, future_token_ids_map):
+    # 将占位的负值 token 替换为前序批次推测出的真实 token id
     input_ids[:] = torch.where(
         input_ids < 0,
         future_token_ids_map[torch.clamp(-input_ids, min=0)],
@@ -73,18 +74,23 @@ class TpModelWorkerClient:
 
         # Init future mappings
         self.future_token_ids_ct = 0
+        # limit 控制环形缓冲区长度，避免 speculative token 无限增长
         self.future_token_ids_limit = self.max_running_requests * 3
+        # future_token_ids_map 保存最近批次生成的 token，供下游请求引用
         self.future_token_ids_map = torch.empty(
             (self.max_running_requests * 5,), dtype=torch.int64, device=self.device
         )
+        # 以 ring buffer 方式复用 future token 保存窗口
 
         # Launch threads
         self.input_queue = Queue()
+        # 调度线程异步投递待执行批次，前向线程从该队列取任务
         self.output_queue = Queue()
         self.forward_stream = torch.get_device_module(self.device).Stream()
         self.forward_thread = threading.Thread(
             target=self.forward_thread_func,
         )
+        # 单独线程在独立 CUDA stream 中执行模型前向，避免 scheduler 被阻塞
         self.forward_thread.start()
         self.parent_process = psutil.Process().parent()
         self.scheduler_stream = torch.get_device_module(self.device).current_stream()
@@ -138,6 +144,7 @@ class TpModelWorkerClient:
     def forward_thread_func(self):
         try:
             with torch.get_device_module(self.device).stream(self.forward_stream):
+                # overlap 模式下使用独立 stream 避免阻塞调度线程
                 self.forward_thread_func_()
         except Exception:
             traceback = get_exception_traceback()
@@ -159,6 +166,7 @@ class TpModelWorkerClient:
             # Keep a reference of model_worker_batch by storing it into a list.
             # Otherwise, the tensor members of model_worker_batch will be released
             # by pytorch and cause CUDA illegal memory access errors.
+            # 双缓冲记录最近两个 batch，防止 PyTorch 提前释放 Tensor
             batch_lists[batch_pt % 2] = model_worker_batch
             batch_pt += 1
 
@@ -167,6 +175,7 @@ class TpModelWorkerClient:
 
             # Resolve future tokens in the input
             input_ids = model_worker_batch.input_ids
+            # 将负索引替换为已生成的 token，实现 speculative overlap
             resolve_future_token_ids(input_ids, self.future_token_ids_map)
 
             # update the consumer index of hicache to the running batch
@@ -180,9 +189,11 @@ class TpModelWorkerClient:
 
             # Update the future token ids map
             bs = len(model_worker_batch.seq_lens)
+            # 预先保留 0 号位置作为对齐空位，后续请求如引用负索引直接写入该窗口
             self.future_token_ids_map[
                 future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
             ] = next_token_ids
+            # 这样下游请求只需要携带负索引即可引用上一批生成的 token
 
             # Copy results to the CPU
             if model_worker_batch.return_logprob:
@@ -200,6 +211,7 @@ class TpModelWorkerClient:
             next_token_ids = next_token_ids.to("cpu", non_blocking=True)
             copy_done.record()
 
+            # 将结果和 event 打包回主线程，等待同步后消费
             self.output_queue.put(
                 (copy_done, logits_output, next_token_ids, can_run_cuda_graph)
             )
@@ -214,7 +226,9 @@ class TpModelWorkerClient:
         )
 
         if launch_done is not None:
+            # launch_done 确保调度线程已提交下一批 CUDA 工作
             launch_done.wait()
+        # 等待 copy_done，保证 GPU->CPU 拷贝已经完成再交还给调度线程
         copy_done.synchronize()
 
         if logits_output.next_token_logprobs is not None:
@@ -234,6 +248,7 @@ class TpModelWorkerClient:
         # Create a new copy of sampling_info because it will be updated in-place by the scheduler for the next batch.
         sampling_info = model_worker_batch.sampling_info
         sampling_info.update_penalties()
+        # 克隆一份采样配置，避免调度线程修改原对象造成竞态
         model_worker_batch.sampling_info = self.cur_sampling_info = dataclasses.replace(
             sampling_info,
             sampling_info_done=threading.Event(),
@@ -242,6 +257,7 @@ class TpModelWorkerClient:
 
         # A cuda stream sync here to avoid the cuda illegal memory access error.
         sync_event = torch.get_device_module(self.device).Event()
+        # 记录当前调度 stream 的同步点，确保输入准备完成
         sync_event.record(self.scheduler_stream)
 
         # Push a new batch to the queue
@@ -256,9 +272,11 @@ class TpModelWorkerClient:
             dtype=torch.int64,
             device=self.device,
         )
+        # 负索引区间在下一批 resolve_future_token_ids 时被回填
         self.future_token_ids_ct = (
             self.future_token_ids_ct + bs
         ) % self.future_token_ids_limit
+        # 通过环形计数器循环利用映射数组，避免长期增长导致内存浪费
         return None, future_next_token_ids, False
 
     def update_weights_from_disk(self, recv_req: UpdateWeightFromDiskReqInput):
@@ -292,5 +310,6 @@ class TpModelWorkerClient:
         return self.worker.can_run_lora_batch(lora_ids)
 
     def __delete__(self):
+        # 通知前向线程退出；copy_queue 仅在旧实现使用，保留兼容逻辑
         self.input_queue.put((None, None))
         self.copy_queue.put((None, None, None))

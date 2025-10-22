@@ -83,7 +83,6 @@ subject2category = {
     "world_religions": "humanities",
 }
 
-
 class MMLUEval(Eval):
     def __init__(self, filename: str, num_examples: Optional[int], num_threads: int):
         df = pandas.read_csv(filename)

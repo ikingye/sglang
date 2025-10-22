@@ -18,20 +18,17 @@ from sglang.utils import download_and_cache_file, dump_state_text, read_jsonl
 
 INVALID = -9999999
 
-
 def get_one_example(lines, i, include_answer):
     ret = "Question: " + lines[i]["question"] + "\nAnswer:"
     if include_answer:
         ret += " " + lines[i]["answer"]
     return ret
 
-
 def get_few_shot_examples(lines, k):
     ret = ""
     for i in range(k):
         ret += get_one_example(lines, i, True) + "\n\n"
     return ret
-
 
 def get_answer_value(answer_str):
     answer_str = answer_str.replace(",", "")
@@ -42,7 +39,6 @@ def get_answer_value(answer_str):
         return ast.literal_eval(numbers[-1])
     except SyntaxError:
         return INVALID
-
 
 def run_eval(args):
     # Select backend
@@ -132,7 +128,6 @@ def run_eval(args):
         "latency": latency,
         "output_throughput": output_throughput,
     }
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

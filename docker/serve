@@ -1,31 +1,42 @@
 #!/bin/bash
+# SGLang Docker容器启动脚本
+# 这个脚本用于在Docker容器中启动SGLang服务器，支持通过环境变量配置各种参数
 
-echo "Starting server"
+echo "Starting server"  # 显示服务器启动信息
 
-SERVER_ARGS="--host 0.0.0.0 --port 8080"
+# 设置默认服务器参数
+SERVER_ARGS="--host 0.0.0.0 --port 8080"  # 默认监听所有网络接口的8080端口
 
-if [ -n "$TENSOR_PARALLEL_DEGREE" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --tp-size ${TENSOR_PARALLEL_DEGREE}"
+# 检查并设置张量并行度
+if [ -n "$TENSOR_PARALLEL_DEGREE" ]; then  # 如果环境变量TENSOR_PARALLEL_DEGREE不为空
+    SERVER_ARGS="${SERVER_ARGS} --tp-size ${TENSOR_PARALLEL_DEGREE}"  # 添加张量并行大小参数
 fi
 
-if [ -n "$DATA_PARALLEL_DEGREE" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --dp-size ${DATA_PARALLEL_DEGREE}"
+# 检查并设置数据并行度
+if [ -n "$DATA_PARALLEL_DEGREE" ]; then  # 如果环境变量DATA_PARALLEL_DEGREE不为空
+    SERVER_ARGS="${SERVER_ARGS} --dp-size ${DATA_PARALLEL_DEGREE}"  # 添加数据并行大小参数
 fi
 
-if [ -n "$EXPERT_PARALLEL_DEGREE" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --ep-size ${EXPERT_PARALLEL_DEGREE}"
+# 检查并设置专家并行度
+if [ -n "$EXPERT_PARALLEL_DEGREE" ]; then  # 如果环境变量EXPERT_PARALLEL_DEGREE不为空
+    SERVER_ARGS="${SERVER_ARGS} --ep-size ${EXPERT_PARALLEL_DEGREE}"  # 添加专家并行大小参数
 fi
 
-if [ -n "$MEM_FRACTION_STATIC" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --mem-fraction-static ${MEM_FRACTION_STATIC}"
+# 检查并设置静态内存分配比例
+if [ -n "$MEM_FRACTION_STATIC" ]; then  # 如果环境变量MEM_FRACTION_STATIC不为空
+    SERVER_ARGS="${SERVER_ARGS} --mem-fraction-static ${MEM_FRACTION_STATIC}"  # 添加静态内存分配比例参数
 fi
 
-if [ -n "$QUANTIZATION" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --quantization ${QUANTIZATION}"
+# 检查并设置量化方式
+if [ -n "$QUANTIZATION" ]; then  # 如果环境变量QUANTIZATION不为空
+    SERVER_ARGS="${SERVER_ARGS} --quantization ${QUANTIZATION}"  # 添加量化参数
 fi
 
-if [ -n "$CHUNKED_PREFILL_SIZE" ]; then
-    SERVER_ARGS="${SERVER_ARGS} --chunked-prefill-size ${CHUNKED_PREFILL_SIZE}"
+# 检查并设置分块预填充大小
+if [ -n "$CHUNKED_PREFILL_SIZE" ]; then  # 如果环境变量CHUNKED_PREFILL_SIZE不为空
+    SERVER_ARGS="${SERVER_ARGS} --chunked-prefill-size ${CHUNKED_PREFILL_SIZE}"  # 添加分块预填充大小参数
 fi
 
+# 启动SGLang服务器
+# 使用python3模块方式启动，模型路径为/opt/ml/model（Docker容器中的标准路径）
 python3 -m sglang.launch_server --model-path /opt/ml/model $SERVER_ARGS

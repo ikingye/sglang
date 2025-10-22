@@ -102,11 +102,14 @@ class Conversation:
 
     def get_prompt(self) -> str:
         """Get the prompt for generation."""
+        # 模板字符串替换系统提示词后得到最终的 system_prompt
         system_prompt = self.system_template.format(system_message=self.system_message)
+        # 依据不同的分隔符风格拼接历史消息，以对齐具体模型的 prompt 约定
         if self.sep_style == SeparatorStyle.ADD_COLON_SINGLE:
             ret = system_prompt + self.sep
             for role, message in self.messages:
                 if message:
+                    # USER: xxx\nASSISTANT: yyy 形式，保持冒号+空格+换行
                     ret += role + ": " + message + self.sep
                 else:
                     ret += role + ":"
@@ -308,6 +311,7 @@ class Conversation:
                 starting_sep = ":\n" if i % 2 == 0 else ": " + self.sep2
                 ending_sep = self.sep if i % 2 == 0 else ""
                 if message:
+                    # 交替使用起止分隔符，保持题面与推理步骤遵循 MetaMath 模板
                     ret += role + starting_sep + message + ending_sep
                 else:
                     ret += role + starting_sep
@@ -422,6 +426,7 @@ class Conversation:
 
         for i, (_, msg) in enumerate(self.messages[self.offset :]):
             if i % 2 == 0:
+                # 奇数偶数位置分别代表 user 提示与 assistant 回答
                 ret.append({"role": "user", "content": msg})
             else:
                 if msg is not None:
@@ -467,6 +472,7 @@ def register_conv_template(template: Conversation, override: bool = False):
             template.name not in chat_templates
         ), f"{template.name} has been registered."
 
+    # 写入全局模板表，后续可按名称快速克隆模板实例
     chat_templates[template.name] = template
 
 
@@ -812,6 +818,7 @@ register_conv_template(
     Conversation(
         name="internvl-2-5",
         system_template="<|im_start|>system\n{system_message}",
+
         system_message="你是书生·万象，英文名是InternVL，是由上海人工智能实验室、清华大学及多家合作单位联合开发的多模态大语言模型。",
         roles=("<|im_start|>user\n", "<|im_start|>assistant\n"),
         sep_style=SeparatorStyle.MPT,

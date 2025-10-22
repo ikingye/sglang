@@ -71,6 +71,7 @@ class TpModelWorker:
         self.pp_rank = pp_rank
 
         # Init model and tokenizer
+        # 根据主/草稿角色选择对应的模型权重路径
         self.model_config = ModelConfig.from_server_args(
             server_args,
             model_path=(
@@ -97,10 +98,12 @@ class TpModelWorker:
             req_to_token_pool=req_to_token_pool,
             token_to_kv_pool_allocator=token_to_kv_pool_allocator,
         )
+        # ModelRunner 封装具体的 GPU 运行时，包括权重加载、KV 池及 CUDA 图等管理逻辑
         if server_args.skip_tokenizer_init:
             self.tokenizer = self.processor = None
         else:
             if self.model_config.is_multimodal:
+                # 多模态模型需要 processor 以处理图像/音频等输入
                 self.processor = get_processor(
                     server_args.tokenizer_path,
                     tokenizer_mode=server_args.tokenizer_mode,
@@ -124,6 +127,7 @@ class TpModelWorker:
         # Profile number of tokens
         self.max_total_num_tokens = self.model_runner.max_total_num_tokens
         self.max_prefill_tokens = server_args.max_prefill_tokens
+        # 运行时允许的请求上限受 KV 容量与用户配置双重约束
         self.max_running_requests = min(
             (
                 self.max_total_num_tokens // 2
@@ -148,6 +152,7 @@ class TpModelWorker:
         ), "Memory pool size is too small"
 
         # Sync random seed across TP workers
+        # 通过广播统一随机种子，保证各分片生成一致的采样行为
         self.random_seed = broadcast_pyobj(
             [server_args.random_seed],
             self.tp_size * self.pp_rank + tp_rank,
@@ -224,10 +229,12 @@ class TpModelWorker:
     ) -> Tuple[
         Union[LogitsProcessorOutput, torch.Tensor], Optional[torch.Tensor], bool
     ]:
+        # 将调度层批次转换成模型执行所需的 ForwardBatch
         forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
 
         pp_proxy_tensors = None
         if not self.pp_group.is_first_rank:
+            # 非首段管道需要提前接收上一段的中间表示
             pp_proxy_tensors = PPProxyTensors(
                 self.pp_group.recv_tensor_dict(
                     all_gather_group=self.get_attention_tp_group()
@@ -235,6 +242,7 @@ class TpModelWorker:
             )
 
         if self.pp_group.is_last_rank:
+            # 最后一段负责产出 logits 并执行采样
             logits_output, can_run_cuda_graph = self.model_runner.forward(
                 forward_batch, pp_proxy_tensors=pp_proxy_tensors
             )
@@ -244,22 +252,28 @@ class TpModelWorker:
             if skip_sample:
                 next_token_ids = None
             else:
+                # 由主模型执行采样，以保证上下游缓存和统计信息在同一进程维护
                 next_token_ids = self.model_runner.sample(
                     logits_output, model_worker_batch
                 )
 
             return logits_output, next_token_ids, can_run_cuda_graph
         else:
+            # 中间段仅返回共享的 proxy tensor，供后续管道继续计算
             pp_proxy_tensors, can_run_cuda_graph = self.model_runner.forward(
                 forward_batch,
                 pp_proxy_tensors=pp_proxy_tensors,
             )
+            # 继续向下游管道推送隐藏态/残差，维持流水线流动
             return pp_proxy_tensors.tensors, None, can_run_cuda_graph
 
     def forward_batch_embedding(self, model_worker_batch: ModelWorkerBatch):
+        # embedding 模式直接复用 forward + 提取 embedding 向量
         forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
+        # embedding 模式只关心模型输出的向量表示
         logits_output, _ = self.model_runner.forward(forward_batch)
         embeddings = logits_output.embeddings
+        # 生成向量后直接返回给上游服务，后续不会进入采样阶段
         return embeddings
 
     def update_weights_from_disk(self, recv_req: UpdateWeightFromDiskReqInput):
@@ -290,6 +304,7 @@ class TpModelWorker:
     def update_weights_from_tensor(self, recv_req: UpdateWeightsFromTensorReqInput):
 
         monkey_patch_torch_reductions()
+        # 反序列化主进程传来的张量后执行权重热更
         success, message = self.model_runner.update_weights_from_tensor(
             named_tensors=MultiprocessingSerializer.deserialize(
                 recv_req.serialized_named_tensors[self.tp_rank]

@@ -1056,6 +1056,7 @@ class MooncakeKVSender(BaseKVSender):
                         logger.warning_once(
                             "Some requests timed out when bootstrapping, "
                             "which means prefill instances fail to receive the KV indices from the decode instance of this request. "
+
                             "If a greater mean TTFT is acceptable, you can 'export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600' (10 minutes) to relax the timeout condition. "
                         )
                         self.kv_mgr.record_failure(
@@ -1136,6 +1137,7 @@ class MooncakeKVReceiver(BaseKVReceiver):
                 return
             else:
                 logger.debug(
+
                     f"Fetch prefill parallel info from [{self.bootstrap_addr}]: DP size:{self.prefill_dp_size}, TP size:{self.prefill_attn_tp_size} PP size:{self.prefill_pp_size}"
                 )
                 self.kv_mgr.prefill_attn_tp_size_table[self.bootstrap_addr] = (

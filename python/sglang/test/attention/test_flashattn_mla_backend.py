@@ -10,7 +10,6 @@ from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
 from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMode
 from sglang.test.test_utils import CustomTestCase
 
-
 class MockModelRunner:
     def __init__(
         self,
@@ -58,7 +57,6 @@ class MockModelRunner:
             enable_memory_saver=False,
         )
 
-
 class MockReqToTokenPool:
     def __init__(self, batch_size, seq_len, device):
         self.req_to_token = (
@@ -66,7 +64,6 @@ class MockReqToTokenPool:
             .reshape(batch_size, seq_len)
             .to(torch.int32)
         )
-
 
 @unittest.skipIf(not torch.cuda.is_available(), "Test requires CUDA")
 class TestFlashAttentionMLABackend(CustomTestCase):
@@ -279,7 +276,6 @@ class TestFlashAttentionMLABackend(CustomTestCase):
         self._run_attention_test(
             ForwardMode.EXTEND, q_len=extend_len, prefix_len=prefix_len
         )
-
 
 if __name__ == "__main__":
     unittest.main()

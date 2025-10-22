@@ -22,10 +22,8 @@ OPENAI_SYSTEM_MESSAGE_CHATGPT = (
     + "\nKnowledge cutoff: 2023-12\nCurrent date: 2024-04-01"
 )
 
-
 Message = Dict[str, Any]  # keys role, content
 MessageList = List[Message]
-
 
 class SamplerBase:
     """
@@ -35,7 +33,6 @@ class SamplerBase:
 
     def __call__(self, message_list: MessageList) -> str:
         raise NotImplementedError()
-
 
 @dataclass
 class EvalResult:
@@ -48,7 +45,6 @@ class EvalResult:
     htmls: List[str]  # strings of valid HTML
     convos: List[MessageList]  # sampled conversations
 
-
 @dataclass
 class SingleEvalResult:
     """
@@ -60,7 +56,6 @@ class SingleEvalResult:
     html: Optional[str] = None
     convo: Optional[MessageList] = None  # sampled conversation
 
-
 class Eval:
     """
     Base class for defining an evaluation.
@@ -68,7 +63,6 @@ class Eval:
 
     def __call__(self, sampler: SamplerBase) -> EvalResult:
         raise NotImplementedError()
-
 
 class LargerHttpxClient(httpx.Client):
     def __init__(self):
@@ -78,7 +72,6 @@ class LargerHttpxClient(httpx.Client):
             max_connections=3600,
         )
         super().__init__(timeout=timeout_config, limits=limits)
-
 
 class ChatCompletionSampler(SamplerBase):
     """
@@ -160,7 +153,6 @@ class ChatCompletionSampler(SamplerBase):
                 trial += 1
             # unknown error shall throw exception
 
-
 QUERY_TEMPLATE_MULTICHOICE = """
 Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: $LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.
 
@@ -175,12 +167,10 @@ D) {D}
 ANSWER_PATTERN_MULTICHOICE = r"(?i)Answer\s*:\s*([A-D])"
 ANSWER_PATTERN = r"(?i)Answer\s*:\s*([^\n]+)"
 
-
 EQUALITY_TEMPLATE = r"""
 Look at the following two expressions (answers to a math problem) and judge whether they are equivalent. Only perform trivial simplifications
 
 Examples:
-
     Expression 1: $2x+3$
     Expression 2: $3+2x$
 
@@ -229,13 +219,11 @@ Yes
 
 YOUR TASK
 
-
 Respond with only "Yes" or "No" (without quotes). Do not include a rationale.
 
     Expression 1: %(expression1)s
     Expression 2: %(expression2)s
 """.strip()
-
 
 HTML_JINJA = """
 <h3>Prompt conversation</h3>
@@ -250,16 +238,13 @@ HTML_JINJA = """
 <p>Score: {{ score }}</p>
 """
 
-
 def format_multichoice_question(row):
     return QUERY_TEMPLATE_MULTICHOICE.format(**row)
-
 
 def check_equality(sampler: SamplerBase, expr1: str, expr2: str):
     prompt = EQUALITY_TEMPLATE % {"expression1": expr1, "expression2": expr2}
     response = sampler([dict(content=prompt, role="user")])
     return response.lower().strip() == "yes"
-
 
 def _compute_stat(values: list, stat: str):
     if stat == "mean":
@@ -272,7 +257,6 @@ def _compute_stat(values: list, stat: str):
         return np.max(values)
     else:
         raise ValueError(f"Unknown {stat =}")
-
 
 def aggregate_results(
     single_eval_results: List[SingleEvalResult],
@@ -306,7 +290,6 @@ def aggregate_results(
         convos=convos,
     )
 
-
 def map_with_progress(f: callable, xs: List[Any], num_threads: int):
     """
     Apply f to each element of xs, using a ThreadPool, and show progress.
@@ -316,7 +299,6 @@ def map_with_progress(f: callable, xs: List[Any], num_threads: int):
     else:
         with ThreadPool(min(num_threads, len(xs))) as pool:
             return list(tqdm(pool.imap(f, xs), total=len(xs)))
-
 
 jinja_env = jinja2.Environment(
     loader=jinja2.BaseLoader(),
@@ -335,7 +317,6 @@ _message_template = """
 </div>
 """
 
-
 def message_to_html(message: Message) -> str:
     """
     Generate HTML snippet (inside a <div>) for a message.
@@ -346,9 +327,7 @@ def message_to_html(message: Message) -> str:
         variant=message.get("variant", None),
     )
 
-
 jinja_env.globals["message_to_html"] = message_to_html
-
 
 _report_template = """<!DOCTYPE html>
 <html>
@@ -415,7 +394,6 @@ _report_template = """<!DOCTYPE html>
 </html>
 """
 
-
 def make_report(eval_result: EvalResult) -> str:
     """
     Create a standalone HTML report from an EvalResult.
@@ -426,7 +404,6 @@ def make_report(eval_result: EvalResult) -> str:
         htmls=eval_result.htmls,
     )
 
-
 def make_report_from_example_htmls(htmls: List[str]):
     """
     Create a standalone HTML report from a list of example htmls
@@ -434,7 +411,6 @@ def make_report_from_example_htmls(htmls: List[str]):
     return jinja_env.from_string(_report_template).render(
         score=None, metrics={}, htmls=htmls
     )
-
 
 def download_dataset(path, url):
     print(f"Downloading dataset {path} from {url}")
@@ -459,7 +435,6 @@ def download_dataset(path, url):
         print(f"Dataset downloaded and saved to {path}")
     except requests.RequestException as e:
         raise Exception(f"Failed to download dataset: {e}")
-
 
 def set_ulimit(target_soft_limit=65535):
     resource_type = resource.RLIMIT_NOFILE

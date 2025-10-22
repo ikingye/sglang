@@ -9,11 +9,9 @@ from sglang.srt.layers.activation import SiluAndMul
 from sglang.srt.layers.quantization.scalar_type import ScalarType, scalar_types
 from sglang.test.test_marlin_utils import awq_marlin_quantize, marlin_quantize
 
-
 def stack_and_dev(tensors: list[torch.Tensor]):
     dev = tensors[0].device
     return torch.stack(tensors, dim=0).to(dev)
-
 
 def torch_experts(
     a: torch.Tensor,
@@ -69,7 +67,6 @@ def torch_experts(
             .to(out.dtype)
         )
 
-
 def torch_moe(
     a: torch.Tensor,
     w1: torch.Tensor,
@@ -84,7 +81,6 @@ def torch_moe(
     return torch_experts(
         a, w1, w2, topk_weight, topk_ids, global_num_experts, expert_map
     )
-
 
 def marlin_moe_generate_valid_test_cases():
     import itertools
@@ -119,7 +115,6 @@ def marlin_moe_generate_valid_test_cases():
     def is_invalid(
         m, n, k, e, topk, dtype, group_size, act_order, quant_type, is_k_full
     ):
-
         # Filter act_order
         if act_order:
             if group_size in (-1, k, n):
@@ -136,7 +131,6 @@ def marlin_moe_generate_valid_test_cases():
         if is_invalid(*case):
             cases.append(case)
     return cases
-
 
 @pytest.mark.flaky(reruns=2)
 @pytest.mark.parametrize(
@@ -279,7 +273,6 @@ def test_fused_marlin_moe(
     )
 
     torch.testing.assert_close(marlin_output, torch_output, atol=5e-2, rtol=0)
-
 
 if __name__ == "__main__":
     # Run the specific test function directly

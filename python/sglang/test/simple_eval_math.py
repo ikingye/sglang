@@ -31,7 +31,6 @@ Solve the following math problem step by step. The last line of your response sh
 Remember to put your answer on its own line after "Answer:", and you do not need to use a \\boxed command.
 """.strip()
 
-
 class MathEval(Eval):
     def __init__(
         self,

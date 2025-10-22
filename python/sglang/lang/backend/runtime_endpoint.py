@@ -1,3 +1,11 @@
+"""
+SGLang运行时端点模块
+这个模块实现了与SGLang运行时服务器通信的后端接口。
+
+RuntimeEndpoint是BaseBackend的具体实现，通过HTTP API与远程的SGLang服务器通信，
+支持文本生成、缓存管理、性能分析等功能。
+"""
+
 import atexit
 import json
 import multiprocessing
@@ -21,8 +29,21 @@ from sglang.lang.ir import (
 )
 from sglang.utils import http_request
 
-
 class RuntimeEndpoint(BaseBackend):
+    """
+    SGLang运行时端点后端
+
+    这个类实现了与远程SGLang服务器通信的后端接口，通过HTTP API调用
+    远程服务器的各种功能，包括文本生成、缓存管理、性能分析等。
+
+    主要功能：
+    - 与远程SGLang服务器建立连接
+    - 执行文本生成任务
+    - 管理缓存和会话
+    - 支持流式和非流式生成
+    - 提供性能分析功能
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -30,6 +51,17 @@ class RuntimeEndpoint(BaseBackend):
         verify: Optional[str] = None,
         chat_template_name: Optional[str] = None,
     ):
+        """
+        初始化运行时端点后端
+
+        建立与远程SGLang服务器的连接，获取模型信息并设置聊天模板。
+
+        参数:
+        base_url: 远程服务器的基础URL
+        api_key: API密钥，用于身份验证
+        verify: SSL证书验证设置
+        chat_template_name: 聊天模板名称，可选
+        """
         super().__init__()
         self.support_concate_and_append = True
 
@@ -53,9 +85,22 @@ class RuntimeEndpoint(BaseBackend):
             )
 
     def get_model_name(self):
+        """
+        获取模型名称
+
+        返回远程服务器使用的模型路径。
+
+        返回:
+        str: 模型路径
+        """
         return self.model_info["model_path"]
 
     def flush_cache(self):
+        """
+        清空远程服务器缓存
+
+        向远程服务器发送清空缓存的请求，释放服务器端的内存资源。
+        """
         res = http_request(
             self.base_url + "/flush_cache",
             api_key=self.api_key,
@@ -65,6 +110,14 @@ class RuntimeEndpoint(BaseBackend):
         self._assert_success(res)
 
     def get_server_info(self):
+        """
+        获取服务器信息
+
+        向远程服务器请求服务器状态和配置信息。
+
+        返回:
+        dict: 服务器信息字典
+        """
         res = http_request(
             self.base_url + "/get_server_info",
             api_key=self.api_key,
@@ -74,9 +127,26 @@ class RuntimeEndpoint(BaseBackend):
         return res.json()
 
     def get_chat_template(self):
+        """
+        获取聊天模板
+
+        返回当前使用的聊天模板。
+
+        返回:
+        ChatTemplate: 聊天模板对象
+        """
         return self.chat_template
 
     def cache_prefix(self, prefix_str: str):
+        """
+        缓存前缀字符串
+
+        将指定的前缀字符串发送到远程服务器进行缓存，
+        用于后续的快速检索和复用。
+
+        参数:
+        prefix_str: 要缓存的前缀字符串
+        """
         res = http_request(
             self.base_url + "/generate",
             json={"text": prefix_str, "sampling_params": {"max_new_tokens": 0}},
@@ -86,6 +156,12 @@ class RuntimeEndpoint(BaseBackend):
         self._assert_success(res)
 
     def start_profile(self):
+        """
+        开始性能分析
+
+        向远程服务器发送开始性能分析的请求，
+        用于收集和分析服务器性能数据。
+        """
         res = http_request(
             self.base_url + "/start_profile",
             api_key=self.api_key,
@@ -94,6 +170,12 @@ class RuntimeEndpoint(BaseBackend):
         self._assert_success(res)
 
     def stop_profile(self):
+        """
+        停止性能分析
+
+        向远程服务器发送停止性能分析的请求，
+        结束性能数据收集。
+        """
         res = http_request(
             self.base_url + "/stop_profile",
             api_key=self.api_key,
@@ -132,18 +214,14 @@ class RuntimeEndpoint(BaseBackend):
 
         dtype_regex = None
         if sampling_params.dtype in ["int", int]:
-
             dtype_regex = REGEX_INT
             sampling_params.stop.extend([" ", "\n"])
         elif sampling_params.dtype in ["float", float]:
-
             dtype_regex = REGEX_FLOAT
             sampling_params.stop.extend([" ", "\n"])
         elif sampling_params.dtype in ["str", str]:
-
             dtype_regex = REGEX_STR
         elif sampling_params.dtype in ["bool", bool]:
-
             dtype_regex = REGEX_BOOL
         else:
             raise RuntimeError(f"Invalid dtype: {sampling_params.dtype}")
@@ -346,11 +424,9 @@ class RuntimeEndpoint(BaseBackend):
                 content = res.text
             raise RuntimeError(content)
 
-
 def compute_normalized_prompt_logprobs(input_logprobs):
     values = [x[0] for x in input_logprobs if x[0]]
     return sum(values) / len(values)
-
 
 class Runtime:
     """

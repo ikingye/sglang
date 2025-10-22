@@ -63,10 +63,12 @@ class ReqToTokenPool:
         self.max_context_len = max_context_len
         self.device = device
         with memory_saver_adapter.region(GPU_MEMORY_TYPE_KV_CACHE):
+            # 在 KV 缓存分配阶段占用 memory saver 区域，防止与权重加载互相争抢显存
             self.req_to_token = torch.zeros(
                 (size, max_context_len), dtype=torch.int32, device=device
             )
 
+        # 维护剩余请求槽位，供快速分配/释放
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
@@ -76,6 +78,7 @@ class ReqToTokenPool:
         return len(self.free_slots)
 
     def alloc(self, need_size: int) -> List[int]:
+        # 简单的顺序分配，实现快速映射：请求 -> token KV 索引
         if need_size > len(self.free_slots):
             return None
 
@@ -113,6 +116,7 @@ class KVCache(abc.ABC):
         self.device = device
         if dtype in (torch.float8_e5m2, torch.float8_e4m3fn):
             # NOTE: Store as torch.uint8 because Tensor.index_put is not implemented for torch.float8_e5m2
+            # float8 类型暂不支持直接写入，转为 byte 存储后由解码路径自行解释
             self.store_dtype = torch.uint8
         else:
             self.store_dtype = dtype
@@ -123,8 +127,10 @@ class KVCache(abc.ABC):
             enable=enable_memory_saver
         )
         self.mem_usage = 0
+        # mem_usage 记录已用显存，供调度日志打印与自适应策略参考
 
         # used for chunked cpu-offloading
+        # 分块搬运尺寸，避免一次性拷贝占满 PCIe 带宽
         self.cpu_offloading_chunk_size = 8192
 
     @abc.abstractmethod
@@ -192,6 +198,9 @@ class MHATokenToKVPool(KVCache):
             "SGLANG_MOONCAKE_CUSTOM_MEM_POOL", "false"
         )
         if self.enable_custom_mem_pool:
+            # Mooncake allocator 将 KV 内存从常规 CUDA malloc 中解耦，提升跨 GPU 传输吞吐
+            # 自定义 NVLink allocator，减少跨 GPU KV cache 访问的 malloc 开销
+            # 在启用分解部署时，可以绕过默认池化避免 allocator 锁竞争
             # TODO(shangming): abstract custom allocator class for more backends
             from mooncake.allocator import NVLinkAllocator
 
@@ -219,6 +228,7 @@ class MHATokenToKVPool(KVCache):
                 if self.enable_custom_mem_pool
                 else nullcontext()
             ):
+                # 可选复用 NVLink 自定义内存池，降低跨设备分配开销
                 # [size, head_num, head_dim] for each layer
                 # The padded slot 0 is used for writing dummy outputs from padded tokens.
                 self.k_buffer = [
@@ -238,6 +248,7 @@ class MHATokenToKVPool(KVCache):
                     for _ in range(self.layer_num)
                 ]
 
+        # 记录每层 KV buffer 的首地址，供 Triton/自定义内核快速索引
         self.k_data_ptrs = torch.tensor(
             [x.data_ptr() for x in self.k_buffer],
             dtype=torch.uint64,
@@ -306,6 +317,7 @@ class MHATokenToKVPool(KVCache):
         torch.cuda.synchronize()
         kv_cache_cpu = []
         chunk_size = self.cpu_offloading_chunk_size
+        # 按块拷贝避免一次性传输过大，边拷贝边追加结果
         for layer_id in range(self.layer_num):
             kv_cache_cpu.append([])
             for i in range(0, len(indices), chunk_size):
@@ -323,6 +335,7 @@ class MHATokenToKVPool(KVCache):
     def load_cpu_copy(self, kv_cache_cpu, indices):
         torch.cuda.synchronize()
         chunk_size = self.cpu_offloading_chunk_size
+        # 按块写回 KV 内容，保证与 get_cpu_copy 对称
         for layer_id in range(self.layer_num):
             for i in range(0, len(indices), chunk_size):
                 chunk_indices = indices[i : i + chunk_size]

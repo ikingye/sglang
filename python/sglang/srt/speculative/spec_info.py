@@ -10,6 +10,7 @@ class SpeculativeAlgorithm(IntEnum):
         return self == SpeculativeAlgorithm.NONE
 
     def is_eagle(self):
+        # EAGLE/EAGLE3 都属于树状推测解码，需要共享同一套流程
         return self == SpeculativeAlgorithm.EAGLE or self == SpeculativeAlgorithm.EAGLE3
 
     def is_eagle3(self):

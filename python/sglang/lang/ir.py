@@ -1,4 +1,12 @@
-"""The intermediate representation."""
+"""
+SGLang中间表示(IR)模块
+这个模块定义了SGLang的中间表示数据结构，包括：
+- 采样参数配置
+- 各种表达式节点类型
+- 正则表达式模式定义
+
+中间表示是SGLang程序在编译和执行过程中的核心数据结构。
+"""
 
 import dataclasses
 import inspect
@@ -11,11 +19,16 @@ from sglang.lang.choices import ChoicesSamplingMethod
 REGEX_INT = r"[-+]?[0-9]+[ \n]*"
 REGEX_FLOAT = r"[-+]?[0-9]*\.?[0-9]+[ \n]*"
 REGEX_BOOL = r"(True|False)"
-REGEX_STR = r"\"[\w\d\s]*\""  # bugs with regex r"\".*\"" in interegular pkg
-
+REGEX_STR = r"\"[\w\d\s]*\""
 
 @dataclasses.dataclass
 class SglSamplingParams:
+    """
+    SGLang采样参数配置类
+
+    这个类定义了文本生成过程中使用的所有采样参数，
+    包括温度、top-p、top-k等控制生成质量和随机性的参数。
+    """
     max_new_tokens: int = 128
     min_new_tokens: int = 0
     n: int = 1
@@ -23,7 +36,7 @@ class SglSamplingParams:
     stop_token_ids: Optional[List[int]] = ()
     temperature: float = 1.0
     top_p: float = 1.0
-    top_k: int = -1  # -1 means disable
+    top_k: int = -1
     min_p: float = 0.0
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
@@ -34,7 +47,6 @@ class SglSamplingParams:
     return_text_in_logprobs: Optional[bool] = (None,)
     json_schema: Optional[str] = None
 
-    # for constrained generation, not included in to_xxx_kwargs
     dtype: Optional[str] = None
     regex: Optional[str] = None
 
@@ -133,7 +145,6 @@ class SglSamplingParams:
             "regex": self.regex,
             "json_schema": self.json_schema,
         }
-
 
 class SglFunction:
     def __init__(self, func, num_api_spec_tokens=None, bind_arguments=None):
@@ -317,7 +328,6 @@ class SglFunction:
             kwargs["backend"] = tracing_scope.tracer_state.backend
             return self.trace(*args, **kwargs)
 
-
 class SglExpr:
     node_ct = 0
 
@@ -387,7 +397,6 @@ class SglExpr:
         dfs_print(self)
         return ret[0]
 
-
 class SglExprList(SglExpr):
     def __init__(self, expr_list: List[SglExpr]):
         super().__init__()
@@ -395,7 +404,6 @@ class SglExprList(SglExpr):
 
     def __repr__(self):
         return f"ExprList({self.expr_list})"
-
 
 class SglArgument(SglExpr):
     def __init__(self, name: str, value: str):
@@ -424,14 +432,12 @@ class SglArgument(SglExpr):
             "This is not compatible with the tracer. "
         )
 
-
 class SglImage(SglExpr):
     def __init__(self, path: str):
         self.path = path
 
     def __repr__(self) -> str:
         return f"SglImage({self.path})"
-
 
 class SglVideo(SglExpr):
     def __init__(self, path: str, num_frames: int):
@@ -440,7 +446,6 @@ class SglVideo(SglExpr):
 
     def __repr__(self) -> str:
         return f"SglVideo({self.path}, {self.num_frames})"
-
 
 class SglGen(SglExpr):
     def __init__(
@@ -494,7 +499,6 @@ class SglGen(SglExpr):
     def __repr__(self):
         return f"Gen('{self.name}')"
 
-
 class SglConstantText(SglExpr):
     def __init__(self, value: str):
         super().__init__()
@@ -502,7 +506,6 @@ class SglConstantText(SglExpr):
 
     def __repr__(self):
         return f"Constant({repr(self.value)})"
-
 
 class SglRoleBegin(SglExpr):
     def __init__(self, role: str):
@@ -512,7 +515,6 @@ class SglRoleBegin(SglExpr):
     def __repr__(self):
         return f"RoleBegin({self.role})"
 
-
 class SglRoleEnd(SglExpr):
     def __init__(self, role: str):
         super().__init__()
@@ -521,9 +523,7 @@ class SglRoleEnd(SglExpr):
     def __repr__(self):
         return f"RoleEnd({self.role})"
 
-
 class SglSelect(SglExpr):
-
     def __init__(
         self,
         name: str,
@@ -540,7 +540,6 @@ class SglSelect(SglExpr):
     def __repr__(self):
         return f"Select({self.name}, choices={self.choices}, choices_method={self.choices_method})"
 
-
 class SglFork(SglExpr):
     def __init__(self, number: int, position_ids_offset=None):
         super().__init__()
@@ -553,7 +552,6 @@ class SglFork(SglExpr):
             f"position_ids_offset={self.position_ids_offset})"
         )
 
-
 class SglGetForkItem(SglExpr):
     def __init__(self, index: int):
         super().__init__()
@@ -561,7 +559,6 @@ class SglGetForkItem(SglExpr):
 
     def __repr__(self):
         return f"GetForkItem(%{self.prev_node.node_id}, index={self.index})"
-
 
 class SglVariable(SglExpr):
     def __init__(self, name: str, source):
@@ -572,7 +569,6 @@ class SglVariable(SglExpr):
     def __repr__(self):
         return f"Variable('{self.name}', source=%{self.source.node_id})"
 
-
 class SglVarScopeBegin(SglExpr):
     def __init__(self, name: str):
         super().__init__()
@@ -580,7 +576,6 @@ class SglVarScopeBegin(SglExpr):
 
     def __repr__(self):
         return f"VarScopeBegin('{self.name}')"
-
 
 class SglVarScopeEnd(SglExpr):
     def __init__(self, name: str):
@@ -590,7 +585,6 @@ class SglVarScopeEnd(SglExpr):
     def __repr__(self):
         return f"VarScopeEnd('{self.name}')"
 
-
 class SglConcateAndAppend(SglExpr):
     def __init__(self, states):
         super().__init__()
@@ -599,14 +593,12 @@ class SglConcateAndAppend(SglExpr):
     def __repr__(self):
         return f"ConcatenateAndAppend('{self.states}')"
 
-
 class SglCommitLazy(SglExpr):
     def __init__(self):
         super().__init__()
 
     def __repr__(self):
         return "CommitLazy()"
-
 
 class SglSeparateReasoning(SglExpr):
     def __init__(self, model_type: str, expr: SglExpr):

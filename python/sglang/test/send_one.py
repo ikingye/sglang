@@ -11,7 +11,6 @@ import json
 
 import requests
 
-
 @dataclasses.dataclass
 class BenchArgs:
     host: str = "localhost"
@@ -56,7 +55,6 @@ class BenchArgs:
     def from_cli_args(cls, args: argparse.Namespace):
         attrs = [attr.name for attr in dataclasses.fields(cls)]
         return cls(**{attr: getattr(args, attr) for attr in attrs})
-
 
 def send_one_prompt(args):
     if args.image:
@@ -148,7 +146,6 @@ def send_one_prompt(args):
     print(f"{speed=:.2f} token/s")
 
     return acc_length, speed
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

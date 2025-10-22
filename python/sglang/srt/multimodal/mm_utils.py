@@ -12,20 +12,18 @@
 # limitations under the License.
 # ==============================================================================
 
-# Source: https://github.com/LLaVA-VL/LLaVA-NeXT/blob/main/llava/mm_utils.py
 """
-Utilities for multi-modal models.
+SGLang多模态模型工具模块
+这个模块提供了多模态模型所需的工具函数。
 
-This python file mainly contains utilities that were used in the
-image processing logic of llava-next including operations such as
-anyres and anyres_max
+这个Python文件主要包含在LLaVA-NeXT的图像处理逻辑中使用的工具，
+包括anyres和anyres_max等操作。
 
-Currently supports the anyres and anyres_max operation for CLIP and
-SigLip. For more information, you may refer to the paper or the blog
+目前支持CLIP和SigLip的anyres和anyres_max操作。
+更多信息请参考论文或博客：
 
 LLaVA-NeXT : https://llava-vl.github.io/blog/2024-01-30-llava-next/
 LLaVA-Onevision : https://arxiv.org/pdf/2408.03326
-
 """
 import ast
 import math
@@ -40,6 +38,17 @@ from sglang.srt.utils import flatten_nested_list
 
 
 def has_valid_data(data) -> bool:
+    """
+    检查数据是否有效
+
+    递归检查数据是否包含有效内容，支持嵌套列表结构。
+
+    参数:
+    data: 要检查的数据，可以是任何类型
+
+    返回:
+    bool: 如果数据有效则返回True，否则返回False
+    """
     if data is None:
         return False
     if isinstance(data, list):
@@ -49,14 +58,17 @@ def has_valid_data(data) -> bool:
 
 def select_best_resolution(original_size, possible_resolutions):
     """
-    Selects the best resolution from a list of possible resolutions based on the original size.
+    根据原始尺寸从可能的分辨率列表中选择最佳分辨率
 
-    Args:
-        original_size (tuple): The original size of the image in the format (width, height).
-        possible_resolutions (list): A list of possible resolutions in the format [(width1, height1), (width2, height2), ...].
+    通过计算有效分辨率和浪费分辨率来选择最佳匹配的分辨率，
+    优先选择有效分辨率最高且浪费分辨率最低的分辨率。
 
-    Returns:
-        tuple: The best fit resolution in the format (width, height).
+    参数:
+    original_size (tuple): 图像的原始尺寸，格式为(width, height)
+    possible_resolutions (list): 可能的分辨率列表，格式为[(width1, height1), (width2, height2), ...]
+
+    返回:
+    tuple: 最佳匹配的分辨率，格式为(width, height)
     """
     original_width, original_height = original_size
     best_fit = None
@@ -64,13 +76,11 @@ def select_best_resolution(original_size, possible_resolutions):
     min_wasted_resolution = float("inf")
 
     for width, height in possible_resolutions:
-        # Calculate the downscaled size to keep the aspect ratio
         scale = min(width / original_width, height / original_height)
         downscaled_width, downscaled_height = int(original_width * scale), int(
             original_height * scale
         )
 
-        # Calculate effective and wasted resolutions
         effective_resolution = min(
             downscaled_width * downscaled_height, original_width * original_height
         )
@@ -89,14 +99,17 @@ def select_best_resolution(original_size, possible_resolutions):
 
 def resize_and_pad_image(image, target_resolution):
     """
-    Resize and pad an image to a target resolution while maintaining aspect ratio.
+    调整图像大小并填充到目标分辨率，同时保持宽高比
 
-    Args:
-        image (PIL.Image.Image): The input image.
-        target_resolution (tuple): The target resolution (width, height) of the image.
+    将输入图像调整到目标分辨率，通过填充保持原始宽高比，
+    确保图像不会变形。
 
-    Returns:
-        PIL.Image.Image: The resized and padded image.
+    参数:
+    image (PIL.Image.Image): 输入图像
+    target_resolution (tuple): 目标分辨率，格式为(width, height)
+
+    返回:
+    PIL.Image.Image: 调整大小并填充后的图像
     """
     original_width, original_height = image.size
     target_width, target_height = target_resolution

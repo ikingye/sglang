@@ -12,9 +12,14 @@
 # limitations under the License.
 # ==============================================================================
 """
-The entry point of inference server. (SRT = SGLang Runtime)
+推理服务器入口点 (SRT = SGLang Runtime)
 
-This file implements HTTP APIs for the inference engine via fastapi.
+这个文件通过FastAPI实现了推理引擎的HTTP API接口，包括：
+- OpenAI兼容的API接口
+- 流式和非流式推理
+- 多模态输入支持
+- 负载均衡和分布式推理
+- 监控和日志功能
 """
 
 import asyncio
@@ -28,7 +33,6 @@ import time
 from http import HTTPStatus
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
-# Fix a bug of Python threading
 setattr(threading, "_register_atexit", lambda *args, **kwargs: None)
 
 from contextlib import asynccontextmanager

@@ -11,7 +11,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""The arguments of the server."""
+"""服务器参数配置模块
+
+这个模块定义了SGLang推理服务器的所有配置参数，包括：
+- 模型和分词器配置
+- 服务器网络配置
+- 性能优化参数
+- 硬件资源配置
+- 高级功能开关
+
+ServerArgs类使用dataclass装饰器，提供了类型安全和默认值支持。
+"""
 
 import argparse
 import dataclasses
@@ -46,7 +56,19 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass
 class ServerArgs:
-    # Model and tokenizer
+    """
+    服务器参数配置类
+
+    这个类定义了SGLang推理服务器的所有配置参数，使用dataclass装饰器
+    提供了类型安全、默认值和自动生成的__init__方法。
+
+    参数分为以下几个主要类别：
+    - 模型和分词器配置
+    - 服务器网络配置
+    - 性能优化参数
+    - 硬件资源配置
+    - 高级功能开关
+    """
     model_path: str
     tokenizer_path: Optional[str] = None
     tokenizer_mode: str = "auto"
@@ -925,6 +947,7 @@ class ServerArgs:
             "--schedule-conservativeness",
             type=float,
             default=ServerArgs.schedule_conservativeness,
+
             help="How conservative the schedule policy is. A larger value means more conservative scheduling. Use a larger value if you see requests being retracted frequently.",
         )
         parser.add_argument(
@@ -995,6 +1018,7 @@ class ServerArgs:
             "--stream-interval",
             type=int,
             default=ServerArgs.stream_interval,
+
             help="The interval (or buffer size) for streaming in terms of the token length. A smaller value makes streaming smoother, while a larger value makes the throughput higher",
         )
         parser.add_argument(
@@ -1300,6 +1324,7 @@ class ServerArgs:
             "--max-loaded-loras",
             type=int,
             default=ServerArgs.max_loaded_loras,
+
             help="If specified, it limits the maximum number of LoRA adapters loaded in CPU memory at a time. The value must be greater than or equal to `--max-loras-per-batch`.",
         )
         parser.add_argument(
@@ -1667,6 +1692,7 @@ class ServerArgs:
         parser.add_argument(
             "--enable-tokenizer-batch-encode",
             action="store_true",
+
             help="Enable batch tokenization for improved performance when processing multiple text inputs. Do not use with image inputs, pre-tokenized input_ids, or input_embeds.",
         )
         parser.add_argument(

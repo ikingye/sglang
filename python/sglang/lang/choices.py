@@ -4,15 +4,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-
 @dataclass
 class ChoicesDecision:
     decision: str
     meta_info: Optional[Dict[str, Any]] = None
 
-
 class ChoicesSamplingMethod(ABC):
-
     @property
     def requires_unconditional_logprobs(self) -> bool:
         return False
@@ -28,9 +25,7 @@ class ChoicesSamplingMethod(ABC):
         unconditional_token_logprobs: Optional[List[List[Any]]] = None,
     ) -> ChoicesDecision: ...
 
-
 class TokenLengthNormalized(ChoicesSamplingMethod):
-
     def __call__(
         self,
         *,
@@ -49,12 +44,9 @@ class TokenLengthNormalized(ChoicesSamplingMethod):
         }
         return ChoicesDecision(decision=best_choice, meta_info=meta_info)
 
-
 token_length_normalized = TokenLengthNormalized()
 
-
 class GreedyTokenSelection(ChoicesSamplingMethod):
-
     def __call__(
         self,
         *,
@@ -103,12 +95,9 @@ class GreedyTokenSelection(ChoicesSamplingMethod):
                 break
         return remaining
 
-
 greedy_token_selection = GreedyTokenSelection()
 
-
 class UnconditionalLikelihoodNormalized(ChoicesSamplingMethod):
-
     @property
     def requires_unconditional_logprobs(self) -> bool:
         return True
@@ -159,6 +148,5 @@ class UnconditionalLikelihoodNormalized(ChoicesSamplingMethod):
                 float(np.mean(inputs_logprobs - unconditionals_logprobs))
             )
         return normalized_unconditional_prompt_logprobs
-
 
 unconditional_likelihood_normalized = UnconditionalLikelihoodNormalized()

@@ -18,9 +18,7 @@ try:
 except ImportError as e:
     openai = tiktoken = e
 
-
 logger = logging.getLogger(__name__)
-
 
 def create_logit_bias_int(tokenizer):
     """Get logit bias for integer numbers."""
@@ -38,11 +36,9 @@ def create_logit_bias_int(tokenizer):
     mask[special_tokens["<|endoftext|>"]] = 100
     return mask
 
-
 INSTRUCT_MODEL_NAMES = [
     "gpt-3.5-turbo-instruct",
 ]
-
 
 @dataclasses.dataclass
 class TokenUsage:
@@ -51,7 +47,6 @@ class TokenUsage:
 
     def reset(self):
         self.prompt_tokens = self.completion_tokens = 0
-
 
 class OpenAI(BaseBackend):
     def __init__(
@@ -379,7 +374,6 @@ class OpenAI(BaseBackend):
             meta_info={"scores": scores},
         )
 
-
 def openai_completion(
     client, token_usage, is_chat=None, retries=3, prompt=None, **kwargs
 ) -> Union[str, List[str]]:
@@ -420,7 +414,6 @@ def openai_completion(
             raise e
 
     return comp
-
 
 def openai_completion_stream(
     client, token_usage, is_chat=None, retries=3, prompt=None, **kwargs

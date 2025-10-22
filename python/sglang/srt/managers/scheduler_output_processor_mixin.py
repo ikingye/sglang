@@ -35,6 +35,7 @@ class SchedulerOutputProcessorMixin:
         result: Union[GenerationBatchResult, EmbeddingBatchResult],
         launch_done: Optional[threading.Event] = None,
     ):
+        # Prefill 阶段处理：回写 extend 结果、更新 radix cache、准备下一轮 decode
         skip_stream_req = None
 
         if self.is_generation:
@@ -82,7 +83,7 @@ class SchedulerOutputProcessorMixin:
                     continue
 
                 if req.is_chunked <= 0:
-                    # req output_ids are set here
+                    # 对于已完成的 prefill 部分，将 next_token 写入 output_ids 并判断是否结束
                     req.output_ids.append(next_token_id)
                     req.check_finished()
 
@@ -99,6 +100,7 @@ class SchedulerOutputProcessorMixin:
                         extend_logprob_start_len = extend_logprob_start_len_per_req[i]
                         extend_input_len = extend_input_len_per_req[i]
                         num_input_logprobs = extend_input_len - extend_logprob_start_len
+                        # 根据 extend 区间增量更新输入 logprob，避免一次性重算
                         self.add_logprob_return_values(
                             i,
                             req,
@@ -113,6 +115,7 @@ class SchedulerOutputProcessorMixin:
                         req.return_hidden_states
                         and logits_output.hidden_states is not None
                     ):
+                        # 将 decoder 隐状态按请求切片保存，供外部取回
                         req.hidden_states.append(
                             logits_output.hidden_states[
                                 hidden_state_offset : (
@@ -154,6 +157,7 @@ class SchedulerOutputProcessorMixin:
                             num_input_logprobs = (
                                 extend_input_len - extend_logprob_start_len
                             )
+                            # chunked 请求尚未结束，先增量累积 logprob，待最后一段一次性写回
                             self.add_input_logprob_return_values(
                                 i,
                                 req,
@@ -197,6 +201,7 @@ class SchedulerOutputProcessorMixin:
         result: GenerationBatchResult,
         launch_done: Optional[threading.Event] = None,
     ):
+        # 解码阶段回写模型输出：追加 token、维护 logprob/grammar 状态、回收 KV 槽
         logits_output, next_token_ids, can_run_cuda_graph = (
             result.logits_output,
             result.next_token_ids,
@@ -205,6 +210,7 @@ class SchedulerOutputProcessorMixin:
         self.num_generated_tokens += len(batch.reqs)
 
         if self.enable_overlap:
+            # overlap 模式下，真正的结果由上一轮 forward 线程 resolve；当前 batch 仅消费
             logits_output, next_token_ids, can_run_cuda_graph = (
                 self.tp_worker.resolve_last_batch_result(launch_done)
             )
@@ -293,6 +299,7 @@ class SchedulerOutputProcessorMixin:
             self.current_scheduler_metrics_enabled()
             and self.forward_ct_decode % self.server_args.decode_log_interval == 0
         ):
+            # 定期记录 decode 阶段吞吐与缓存用量
             self.log_decode_stats(can_run_cuda_graph, running_batch=batch)
 
     def add_input_logprob_return_values(
@@ -348,6 +355,7 @@ class SchedulerOutputProcessorMixin:
             req.temp_input_top_logprobs_idx.append(output.input_top_logprobs_idx[i])
 
         if req.token_ids_logprob is not None:
+            # 指定 token 集合的 logprob 需要额外缓存，等待最后一次 prefill 时写回
             req.temp_input_token_ids_logprobs_val.append(
                 output.input_token_ids_logprobs_val[i]
             )
@@ -356,6 +364,7 @@ class SchedulerOutputProcessorMixin:
             )
 
         if last_prefill_chunk:
+            # 最后一段 prefill 才将临时缓存转写到 req 对象，避免重复拷贝
             input_token_logprobs = req.input_token_logprobs
             req.input_token_logprobs = None
             assert req.input_token_logprobs_val is None
@@ -368,9 +377,11 @@ class SchedulerOutputProcessorMixin:
             req.input_token_logprobs_val = [None]
             req.input_token_logprobs_val.extend(input_token_logprobs)
             # The last input logprob is for sampling, so just pop it out.
+            # 最后一项用于后续 sample，不属于输入 logprob 统计
             req.input_token_logprobs_val.pop()
 
             # Compute input_token_logprobs_idx
+            # logprob 对应的 token id 匹配原始 prompt 的切片（从 logprob_start_len 开始）
             input_token_logprobs_idx = req.origin_input_ids[req.logprob_start_len :]
             # Clip the padded hash values from image tokens.
             # Otherwise, it will lead to detokenization errors.
@@ -439,6 +450,7 @@ class SchedulerOutputProcessorMixin:
         output: LogitsProcessorOutput,
     ):
         """Attach logprobs to the return values."""
+        # 追加本次 decode 的输出 logprob，并同步累积输入端增量
         req.output_token_logprobs_val.append(output.next_token_logprobs[i])
         req.output_token_logprobs_idx.append(next_token_ids[i])
 
@@ -478,6 +490,7 @@ class SchedulerOutputProcessorMixin:
         return_logprob: bool,
         skip_req: Optional[Req] = None,
     ):
+        # 将解码结果推送给 Tokenizer/Detokenizer，构造流式响应 payload
         rids = []
         finished_reasons: List[BaseFinishReason] = []
 
@@ -557,6 +570,7 @@ class SchedulerOutputProcessorMixin:
                 send_output_token_logprobs_offset = (
                     req.send_output_token_logprobs_offset
                 )
+                # 收集本次需推送的字段，交由 detokenizer 继续处理
                 rids.append(req.rid)
                 finished_reasons.append(
                     req.finished_reason.to_json() if req.finished_reason else None
@@ -592,6 +606,7 @@ class SchedulerOutputProcessorMixin:
                         # Decode server does not send input logprobs
                         and self.disaggregation_mode != DisaggregationMode.DECODE
                     ):
+                        # 首次触发时把输入端 logprob 整体打包出去，随后标记已发送避免重复
                         input_token_logprobs_val.append(req.input_token_logprobs_val)
                         input_token_logprobs_idx.append(req.input_token_logprobs_idx)
                         input_top_logprobs_val.append(req.input_top_logprobs_val)
@@ -670,6 +685,7 @@ class SchedulerOutputProcessorMixin:
             if self.model_config.is_multimodal_gen:
                 return
 
+            # 将批次数据一次性推送给 detokenizer，由其负责拼接文本或流式输出到客户端
             self.send_to_detokenizer.send_pyobj(
                 BatchTokenIDOut(
                     rids,
@@ -702,6 +718,7 @@ class SchedulerOutputProcessorMixin:
             )
 
     def stream_output_embedding(self: Scheduler, reqs: List[Req]):
+        # 嵌入模式：收集完成请求的 embedding 并打包返回 Tokenizer
         rids = []
         finished_reasons: List[BaseFinishReason] = []
 

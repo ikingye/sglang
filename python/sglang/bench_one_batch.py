@@ -31,7 +31,6 @@ prefill logits (final): tensor([[-8.3125, -7.1172,  3.3457,  ..., -4.9570, -4.13
 <s> The capital of France is Paris.
 The capital of the United States is Washington, D.C.
 
-
 ========== Prompt 1 ==========
 <s> The capital of the United Kindom is London.
 The capital of the United Kingdom is London.
@@ -78,7 +77,6 @@ from sglang.srt.utils import (
     set_gpu_proc_affinity,
     suppress_other_loggers,
 )
-
 
 @dataclasses.dataclass
 class BenchArgs:
@@ -146,7 +144,6 @@ class BenchArgs:
             **{attr: attr_type(getattr(args, attr)) for attr, attr_type in attrs}
         )
 
-
 def load_model(server_args, port_args, tp_rank):
     suppress_other_loggers()
     rank_print = print if tp_rank == 0 else lambda *args, **kwargs: None
@@ -175,7 +172,6 @@ def load_model(server_args, port_args, tp_rank):
     if server_args.tp_size > 1:
         dist.barrier()
     return model_runner, tokenizer
-
 
 def prepare_inputs_for_correctness_test(bench_args, tokenizer, custom_prompts):
     prompts = (
@@ -212,7 +208,6 @@ def prepare_inputs_for_correctness_test(bench_args, tokenizer, custom_prompts):
 
     return input_ids, reqs
 
-
 def prepare_extend_inputs_for_correctness_test(
     bench_args, input_ids, reqs, model_runner
 ):
@@ -225,7 +220,6 @@ def prepare_extend_inputs_for_correctness_test(
         req.extend_input_len = len(req.fill_ids) - len(req.prefix_indices)
         req.logprob_start_len = len(req.origin_input_ids) - 1
     return reqs
-
 
 def prepare_synthetic_inputs_for_latency_test(
     batch_size, input_len, custom_inputs=None
@@ -256,7 +250,6 @@ def prepare_synthetic_inputs_for_latency_test(
 
     return reqs
 
-
 @torch.no_grad
 def extend(reqs, model_runner):
     batch = ScheduleBatch.init_new(
@@ -277,7 +270,6 @@ def extend(reqs, model_runner):
     next_token_ids = model_runner.sample(logits_output, forward_batch)
     return next_token_ids, logits_output.next_token_logits, batch
 
-
 @torch.no_grad
 def decode(input_token_ids, batch, model_runner):
     batch.output_ids = input_token_ids
@@ -288,7 +280,6 @@ def decode(input_token_ids, batch, model_runner):
     logits_output, _ = model_runner.forward(forward_batch)
     next_token_ids = model_runner.sample(logits_output, forward_batch)
     return next_token_ids, logits_output.next_token_logits
-
 
 def _maybe_prepare_mlp_sync_batch(batch: ScheduleBatch, model_runner):
     if require_mlp_sync(model_runner.server_args):
@@ -310,7 +301,6 @@ def _maybe_prepare_mlp_sync_batch(batch: ScheduleBatch, model_runner):
             disable_overlap_schedule=model_runner.server_args.disable_overlap_schedule,
         )
 
-
 def _read_prompts_from_file(prompt_file, rank_print):
     """Read custom prompts from the file specified by `--prompt-filename`."""
     if not prompt_file:
@@ -323,7 +313,6 @@ def _read_prompts_from_file(prompt_file, rank_print):
     with open(prompt_file, "r") as pf:
         return pf.readlines()
 
-
 def _save_profile_trace_results(profiler, filename):
     parent_dir = os.path.dirname(os.path.abspath(filename))
     os.makedirs(parent_dir, exist_ok=True)
@@ -333,7 +322,6 @@ def _save_profile_trace_results(profiler, filename):
             sort_by="self_cpu_time_total"
         )
     )
-
 
 def correctness_test(
     server_args,
@@ -382,10 +370,8 @@ def correctness_test(
         rank_print(f"========== Prompt {i} ==========")
         rank_print(tokenizer.decode(output_ids[i]), "\n")
 
-
 def synchronize(device):
     torch.get_device_module(device).synchronize()
-
 
 def latency_test_run_once(
     run_name,
@@ -509,7 +495,6 @@ def latency_test_run_once(
     measurement_results["overall_throughput"] = throughput
     return measurement_results
 
-
 def latency_test(
     server_args,
     port_args,
@@ -607,7 +592,6 @@ def latency_test(
     if server_args.tp_size > 1:
         destroy_distributed_environment()
 
-
 def main(server_args, bench_args):
     server_args.cuda_graph_max_bs = max(bench_args.batch_size)
 
@@ -647,7 +631,6 @@ def main(server_args, bench_args):
             proc.join()
 
         proc.terminate()
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

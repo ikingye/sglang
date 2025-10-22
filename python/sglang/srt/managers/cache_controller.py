@@ -31,9 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 class LayerDoneCounter:
+    """记录分层 KV 传输完成度的计数器，支持 overlap 下多生产者/消费者。"""
+
     def __init__(self, num_layers):
         self.num_layers = num_layers
-        # extra producer and consumer counters for overlap mode
+        # overlap 模式下允许并行准备/传输/消费，使用三个槽位轮换
         self.num_counters = 3
         self.counters = [num_layers] * self.num_counters
         self.conditions = [threading.Condition() for _ in range(self.num_counters)]
@@ -52,20 +54,24 @@ class LayerDoneCounter:
 
     def increment(self):
         with self.conditions[self.producer_index]:
+            # 生产者增加完成层数，唤醒等待的消费者
             self.counters[self.producer_index] += 1
             self.conditions[self.producer_index].notify_all()
 
     def wait_until(self, threshold):
         with self.conditions[self.consumer_index]:
+            # 消费者阻塞直到计数超过阈值，确保数据已准备完成
             while self.counters[self.consumer_index] <= threshold:
                 self.conditions[self.consumer_index].wait()
 
     def reset(self):
         with self.conditions[self.producer_index]:
+            # 轮换到新缓冲区时重置计数
             self.counters[self.producer_index] = 0
 
 
 class CacheOperation:
+    """描述一次 KV 传输操作，可按优先级合并/拆分。"""
 
     counter = 0
 
@@ -90,6 +96,7 @@ class CacheOperation:
         # multiple operations can be merged into a single operation for batch processing
         self.host_indices = torch.cat([self.host_indices, other.host_indices])
         self.device_indices = torch.cat([self.device_indices, other.device_indices])
+        # 合并后继承更高优先级（数值更小）的任务属性
         self.priority = min(self.priority, other.priority)
         self.node_ids.extend(other.node_ids)
 
@@ -99,6 +106,7 @@ class CacheOperation:
             return [self]
 
         chunk_size = math.ceil(len(self.host_indices) / factor)
+        # 拆分后每个子操作在相同 node_id 上继续执行
         split_ops = []
         for i in range(0, len(self.host_indices), chunk_size):
             split_ops.append(
@@ -109,6 +117,7 @@ class CacheOperation:
                 )
             )
         # Inherit the node_ids on the final chunk
+        # 最后一块延续原操作的节点列表，其余块会在后续调度阶段设置具体 node_id
         if split_ops:
             split_ops[-1].node_ids = self.node_ids
 
@@ -130,6 +139,7 @@ class TransferBuffer:
         self.buffers = Queue(maxsize=buffer_count)
         # todo: adjust the buffer size based on throughput profile of the system
         self.max_buffer_size = max_buffer_size
+        # 队列承担生产/传输之间的解耦缓冲
 
     def full(self) -> bool:
         return self.buffers.full()
@@ -140,6 +150,7 @@ class TransferBuffer:
     def put(self, item, block=True, timeout=1) -> None:
         while not self.stop_event.is_set():
             try:
+                # 生产阶段把 CacheOperation 放入缓冲队列；满时根据 block 参数选择等待
                 self.buffers.put(item, block=block, timeout=timeout)
                 break
             except Full:
@@ -151,6 +162,7 @@ class TransferBuffer:
 
     def get(self, block=True, timeout=1) -> Optional[CacheOperation]:
         try:
+            # 消费阶段从缓冲区取出待传输数据；超时返回 None 以便退出
             return self.buffers.get(block=block, timeout=timeout)
         except Empty:
             return None
@@ -162,6 +174,8 @@ class TransferBuffer:
 
 
 class StorageOperation:
+    """用于描述持久化存储中的一次写入/拉取操作。"""
+
     counter = 0
 
     def __init__(
@@ -185,6 +199,8 @@ class StorageOperation:
 
 
 class PrefetchOperation(StorageOperation):
+    """包装预取任务，跟踪完成度并支持取消。"""
+
     def __init__(
         self,
         request_id: str,
@@ -217,6 +233,7 @@ class PrefetchOperation(StorageOperation):
 
 
 class HiCacheController:
+    """负责在设备 KV cache、主机内存及外部存储之间调度数据的控制器。"""
 
     def __init__(
         self,
@@ -286,12 +303,14 @@ class HiCacheController:
                 0.8 * (self.mem_pool_host.size - self.mem_pool_device.size)
             )
             # tracking the number of tokens locked in prefetching, updated by the main scheduler thread
+            # 该计数用于限流，防止预取占用过多主机页导致实时请求无空间
             self.prefetch_tokens_occupied = 0
 
             # create a new communication group for synchronizing storage operations across TP workers
             self.tp_world_size = torch.distributed.get_world_size(group=tp_group)
             if self.tp_world_size > 1:
                 group_ranks = torch.distributed.get_process_group_ranks(tp_group)
+                # 创建专用通信组，用于同步预取/备份操作（避免阻塞原有 TP 通信）
                 self.prefetch_tp_group = torch.distributed.new_group(
                     group_ranks, backend="gloo"
                 )
@@ -325,6 +344,7 @@ class HiCacheController:
         self.write_stream = torch.cuda.Stream()
         self.load_stream = torch.cuda.Stream()
 
+        # 写入/读取线程分别负责 GPU<->CPU 的 KV 传输，配合流实现异步拷贝
         self.write_thread = threading.Thread(
             target=self.write_thread_func_direct, daemon=True
         )
@@ -352,6 +372,7 @@ class HiCacheController:
             self.backup_thread.start()
 
     def reset(self):
+        # 停止现有线程并清空队列，通常在 flush 操作时调用
         self.stop_event.set()
         self.write_thread.join()
         self.load_thread.join()
@@ -377,6 +398,7 @@ class HiCacheController:
             target=self.load_thread_func_layer_by_layer, daemon=True
         )
         self.stop_event.clear()
+        # 重建线程后重新进入运行态，允许下一轮缓存请求继续使用
         self.write_thread.start()
         self.load_thread.start()
 
@@ -432,8 +454,10 @@ class HiCacheController:
     def move_indices(self, host_indices, device_indices):
         # move indices to GPU if using kernels, to host if using direct indexing
         if self.io_backend == "kernel":
+            # kernel 模式在 GPU 上处理索引，提前搬到 device 端
             return host_indices.to(self.mem_pool_device.device), device_indices
         elif self.io_backend == "direct":
+            # direct 模式使用 CPU gather，需将 device_indices 搬回并按 host 索引排序
             device_indices = device_indices.cpu()
             host_indices, idx = host_indices.sort()
             return host_indices, device_indices.index_select(0, idx)
@@ -500,6 +524,7 @@ class HiCacheController:
                     self.io_backend,
                 )
                 self.load_stream.synchronize()
+                # 通知上层第 i 层已经加载完成，允许消费者继续
                 self.layer_done_counter.increment()
 
             self.mem_pool_host.complete_io(batch_operation.host_indices)
@@ -511,6 +536,7 @@ class HiCacheController:
         self, device_indices: torch.Tensor, host_indices: torch.Tensor
     ) -> int:
         if self.mem_pool_host.is_synced(host_indices):
+            # 如果主机副本已同步，直接释放 GPU 槽位并标记 host 缓存可用
             self.mem_pool_device_allocator.free(device_indices)
             self.mem_pool_host.update_backup(host_indices)
             return len(device_indices)
@@ -524,6 +550,7 @@ class HiCacheController:
             raise ValueError("Other eviction policies are not supported yet.")
 
         if self.mem_pool_host.is_backup(host_indices):
+            # 清理 host 副本，释放内存
             self.mem_pool_host.free(host_indices)
             return len(host_indices)
         else:
@@ -566,6 +593,7 @@ class HiCacheController:
                 break
             completed_tokens = operation.completed_tokens
             if operation.increment(self.page_size * len(page_hashes)):
+                # 将预取到的页填入 host KV buffer，并更新完成度
                 for i in range(len(page_hashes)):
                     self.mem_pool_host.set_from_flat_data_page(
                         operation.host_indices[completed_tokens],
@@ -636,6 +664,7 @@ class HiCacheController:
                 if (
                     operation.host_indices is not None
                 ) and self.prefetch_rate_limit_check():
+                    # 依次计算新 token 对应的页哈希，确认命中存储的数量
                     last_hash = operation.last_hash
                     tokens_to_fetch = operation.token_ids
 
@@ -674,6 +703,7 @@ class HiCacheController:
                         op=torch.distributed.ReduceOp.MIN,
                         group=self.prefetch_tp_group,
                     )
+                    # 所有 TP shard 都必须命中同样的页数，取最小值防止某个分片缺页
                     storage_hit_count = storage_hit_count_tensor.item()
 
                 if storage_hit_count < self.prefetch_threshold:
@@ -721,6 +751,7 @@ class HiCacheController:
                 )
                 for j in range(i, i + len(page_hashes))
             ]
+            # 分批写入后端存储，避免一次提交过大导致阻塞
             success = self.storage_backend.batch_set(page_hashes, page_data)
             if not success:
                 logger.warning(f"Failed to write page {page_hashes} to storage.")
@@ -775,6 +806,7 @@ class HiCacheController:
                     completed_tokens_tensor = torch.tensor(
                         min_completed_tokens, dtype=torch.int
                     )
+                    # 多个 TP worker 同时写入时取最小完成进度，确保同步一致
                     torch.distributed.all_reduce(
                         completed_tokens_tensor,
                         op=torch.distributed.ReduceOp.MIN,

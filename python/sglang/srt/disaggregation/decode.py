@@ -110,6 +110,7 @@ class DecodeReqToTokenPool:
             return None
 
         select_index = self.free_slots[:need_size]
+        # 前一段用于运行批次，尾段用于 pre-alloc 请求，两者共享同一池
         self.free_slots = self.free_slots[need_size:]
         return select_index
 
@@ -316,6 +317,7 @@ class DecodePreallocQueue:
         polls = poll_and_all_reduce(
             [decode_req.kv_receiver for decode_req in self.queue], self.gloo_group
         )
+        # 通过 all-reduce 聚合各 rank 的握手状态，确保多机 decode 步调一致
 
         for i, (decode_req, poll) in enumerate(zip(self.queue, polls)):
             if poll == KVPoll.Bootstrapping:
@@ -350,6 +352,7 @@ class DecodePreallocQueue:
             len(r.origin_input_ids) + len(r.output_ids)
             for r in self.scheduler.running_batch.reqs
         )
+        # 正在运行的请求一旦回收即可返还 KV，因此将其 token 视为潜在可挪用余量
         allocatable_tokens = self._allocatable_tokens(
             retractable_tokens=retractable_tokens, count_retracted=True
         )
@@ -394,6 +397,7 @@ class DecodePreallocQueue:
                 )
                 > allocatable_tokens
             ):
+                # 既考虑保底的 reserved token，也考虑可能的最大生成长度，超出则等待
                 break
             if required_tokens_for_request > allocatable_tokens:
                 break
@@ -573,6 +577,7 @@ class DecodeTransferQueue:
         polls = poll_and_all_reduce(
             [decode_req.kv_receiver for decode_req in self.queue], self.gloo_group
         )
+        # 通过 all-reduce 聚合各 rank 的握手状态，确保多机 decode 步调一致
 
         transferred_reqs = []
         indices_to_remove = set()

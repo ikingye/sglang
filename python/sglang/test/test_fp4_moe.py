@@ -24,7 +24,6 @@ kE2M1ToFloat = torch.tensor(
 FLOAT8_E4M3_MAX = 448.0
 FLOAT4_E2M1_MAX = 6.0
 
-
 def convert_swizzled_to_linear(a_sf_swizzled: torch.Tensor, m, k, block_size):
     m_tiles = (m + 128 - 1) // 128
     f = block_size * 4
@@ -33,7 +32,6 @@ def convert_swizzled_to_linear(a_sf_swizzled: torch.Tensor, m, k, block_size):
     tmp = torch.permute(tmp, (0, 1, 4, 3, 2, 5))
     out = tmp.reshape(m_tiles * 128, k_tiles * f // block_size)
     return out[0:m, 0:k]
-
 
 def dequantize_nvfp4_to_dtype(
     tensor_fp4, tensor_sf, global_scale, dtype, device, block_size=16
@@ -52,7 +50,6 @@ def dequantize_nvfp4_to_dtype(
     # scale the tensor
     out = (tensor_f32 * tensor_sf_dtype.unsqueeze(-1)).reshape(m, k)
     return out.to(dtype=dtype)
-
 
 def break_fp4_bytes(a, dtype):
     assert a.dtype == torch.uint8
@@ -77,7 +74,6 @@ def break_fp4_bytes(a, dtype):
     # Reshape to final form
     return values.reshape(m, n * 2).to(dtype=dtype)
 
-
 MNK_FACTORS = [
     (2, 1024, 1024),
     (2, 1024, 1536),
@@ -90,7 +86,6 @@ MNK_FACTORS = [
     (224, 1024, 1024),
     (224, 1024, 1536),
 ]
-
 
 # Reference implementation of torch_moe
 def torch_moe(a, w1, w2, score, topk, expert_map):
@@ -112,7 +107,6 @@ def torch_moe(a, w1, w2, score, topk, expert_map):
     return (
         out.view(B, -1, w2.shape[1]) * topk_weight.view(B, -1, 1).to(out.dtype)
     ).sum(dim=1)
-
 
 def check_moe(
     m: int,
@@ -234,7 +228,6 @@ def check_moe(
 
     torch.testing.assert_close(torch_output, test_output, atol=1e-1, rtol=1e-1)
 
-
 @pytest.mark.parametrize("m,n,k", MNK_FACTORS)
 @pytest.mark.parametrize("e", [40, 64, 256])
 @pytest.mark.parametrize("topk", [1, 6, 8])
@@ -281,7 +274,6 @@ def test_cutlass_fp4_moe_no_graph(
 
     check_moe(m, n, k, e, topk, dtype, cutlass_moe_impl, flip_w13=False)
 
-
 @pytest.mark.parametrize("m,n,k", MNK_FACTORS)
 @pytest.mark.parametrize("e", [40, 64, 256])
 @pytest.mark.parametrize("topk", [1, 6, 8])
@@ -321,7 +313,6 @@ def test_flashinfer_fp4_moe_no_graph(
         )[0]
 
     check_moe(m, n, k, e, topk, dtype, flashinfer_moe_impl, flip_w13=True)
-
 
 if __name__ == "__main__":
     test_cutlass_fp4_moe_no_graph(224, 1024, 1024, 256, 8, torch.half)

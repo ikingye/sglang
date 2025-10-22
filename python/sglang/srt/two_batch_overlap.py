@@ -45,6 +45,7 @@ def get_token_num_per_seq(
     forward_mode: ForwardMode,
     spec_info: Optional[Union[EagleDraftInput, EagleVerifyInput]] = None,
 ):
+    # 估算每条序列一次 forward 会消费多少 token，供后续切分计算使用
     if forward_mode.is_target_verify():
         return spec_info.draft_token_num
     elif forward_mode.is_decode():
@@ -65,9 +66,11 @@ def compute_split_seq_index(
 ) -> Optional[int]:
     if forward_mode == ForwardMode.EXTEND:
         assert extend_lens is not None
+        # Prefill 模式下按照 extend_lens 分布寻找更均衡的分割点
         return _split_extend_seqs(extend_lens)
     elif forward_mode.is_target_verify() or forward_mode.is_decode():
         assert token_num_per_seq is not None
+        # decode/verify 模式 token 均匀分布，直接按一半切分
         return (num_tokens // token_num_per_seq) // 2
     elif forward_mode.is_idle():
         assert num_tokens == 0
@@ -85,6 +88,7 @@ def _is_two_chunk_split_enabled(extend_lens: Sequence[int]) -> bool:
     overall_sum = sum(extend_lens)
     threshold = global_server_args_dict["tbo_token_distribution_threshold"]
     assert threshold <= 0.5, f"{threshold=}"
+    # 若默认切分导致左右 token 比例偏离阈值，则启用二阶段切分策略
     return left_sum < overall_sum * threshold or left_sum > overall_sum * (
         1 - threshold
     )
@@ -126,6 +130,7 @@ def _split_array_by_balanced_sum(arr: Sequence[int]) -> int:
             min_diff = diff
             best_index = i
         else:
+            # 一旦差值开始增大，即表示切分点已越界，可提前停止遍历
             break
 
     return best_index
@@ -143,6 +148,7 @@ def _update_device_and_sum_field_from_cpu_field(
     ):
         return
 
+    # 将 CPU 侧缓存异步搬运到 device，并在需要时顺带更新求和字段
     new_device_value = (
         cpu_value
         if isinstance(cpu_value, torch.Tensor)
@@ -181,6 +187,7 @@ def split_spec_info(
 ):
     if spec_info is None:
         return None
+    # 按子批索引截取 draft token 与自定义 mask，使拆分后的 batch 仍能使用原推测配置
     if spec_info.draft_token is not None:
         draft_token = spec_info.draft_token[start_token_index:end_token_index]
     else:
@@ -241,6 +248,7 @@ def split_spec_info(
         seq_lens_cpu=seq_lens_cpu,
         seq_lens_sum=seq_lens_sum,
     )
+    # 复制原 dataclass 并替换局部字段，保证子批仍能复用原有的推测配置
     return output_spec_info
 
 
@@ -253,6 +261,7 @@ def compute_split_token_index(
     if forward_mode == ForwardMode.EXTEND:
         assert extend_seq_lens is not None
         if _is_two_chunk_split_enabled(extend_seq_lens):
+            # 二段切分时直接在 token 维度取半，随后 prepare 会根据实际长度再调整
             return sum(extend_seq_lens) // 2
         return sum(extend_seq_lens[:split_seq_index])
     elif forward_mode.is_target_verify() or forward_mode.is_decode():
@@ -288,6 +297,7 @@ def compute_split_indices_for_cuda_graph_replay(
         extend_seq_lens=None,
         token_num_per_seq=token_num_per_seq,
     )
+    # 捕获阶段计算的切分索引会在重放时复用，保证 CUDA 图输入维度保持一致
     return tbo_split_seq_index, tbo_split_token_index
 
 
@@ -301,6 +311,7 @@ class TboCudaGraphRunnerPlugin:
     def capture_one_batch_size(self, batch: ForwardBatch, num_tokens: int):
         if not global_server_args_dict["enable_two_batch_overlap"]:
             return
+        # 捕获阶段按照实际 token 数记录两子批所需的 padding 信息
         token_num_per_seq = get_token_num_per_seq(
             forward_mode=batch.forward_mode, spec_info=batch.spec_info
         )
@@ -315,6 +326,7 @@ class TboCudaGraphRunnerPlugin:
         assert batch.tbo_split_seq_index is not None, f"{num_tokens=}"
 
         self._tbo_children_num_token_non_padded[...] = (
+            # 记录两个子批 padding 前的真实 token 数，重放时可直接复用
             TboForwardBatchPreparer.compute_tbo_children_num_token_non_padded(batch)
         )
 
@@ -341,6 +353,7 @@ class TboCudaGraphRunnerPlugin:
             )
         )
 
+        # 重放阶段根据捕获的切分点恢复两子批的 token 计数
         self._tbo_children_num_token_non_padded[...] = (
             TboForwardBatchPreparer.compute_tbo_children_num_token_non_padded_raw(
                 tbo_split_token_index=tbo_split_token_index,
@@ -371,12 +384,14 @@ class TboDPAttentionPreparer:
                 num_tokens = local_batch.batch_size() * token_num_per_seq
             else:
                 num_tokens = local_batch.extend_num_tokens
+            # DP all-gather 前先决定本 rank 的切分点与可行性
             self.local_tbo_split_seq_index = compute_split_seq_index(
                 forward_mode=local_batch.forward_mode,
                 num_tokens=num_tokens,
                 extend_lens=local_batch.extend_lens,
                 token_num_per_seq=token_num_per_seq,
             )
+            # local_can_run_tbo 同时考虑 DeepEP 模式，防止在低延迟专家通信下引入额外开销
             resolved_deepep_mode = deepep_mode.resolve(local_batch.is_extend_in_batch)
             local_can_run_tbo = (self.local_tbo_split_seq_index is not None) and not (
                 (
@@ -386,6 +401,7 @@ class TboDPAttentionPreparer:
                 and enable_deepep_moe
                 and (resolved_deepep_mode == DeepEPMode.LOW_LATENCY)
             )
+            # DeepEP 低延迟模式需要独占通信通道，此时禁用 TBO 以避免二者竞争
         else:
             self.local_tbo_split_seq_index = 0
             local_can_run_tbo = True
@@ -449,6 +465,7 @@ class TboForwardBatchPreparer:
         tbo_children_num_token_non_padded = (
             cls.compute_tbo_children_num_token_non_padded(batch)
         )
+        # 将父批拆解成两个子批，后续分别交给两个流水线阶段
         cls.prepare_raw(
             batch, tbo_children_num_token_non_padded=tbo_children_num_token_non_padded
         )
@@ -484,6 +501,7 @@ class TboForwardBatchPreparer:
             tbo_children_num_token_non_padded
         )
 
+        # 子批 A 负责前半部分 token，必要时多包含一个序列以实现 two-chunk
         child_a = cls.filter_batch(
             batch,
             start_token_index=0,
@@ -497,6 +515,7 @@ class TboForwardBatchPreparer:
             output_attn_backend=attn_backend_child_a,
             out_num_token_non_padded=out_num_token_non_padded_a,
         )
+        # 子批 B 接管剩余 token，复用父批的注意力后端子实例
         child_b = cls.filter_batch(
             batch,
             start_token_index=tbo_split_token_index,
@@ -671,6 +690,7 @@ class TboForwardBatchPreparer:
                 _compute_extend_num_tokens(batch.input_ids, batch.forward_mode)
                 == batch.extend_num_tokens
             ), f"{batch=}"
+        # extend_num_tokens 取决于 subseq token 数，TargetVerify 时保持为 None
         extend_num_tokens = _compute_extend_num_tokens(
             output_dict["input_ids"], output_dict["forward_mode"]
         )
@@ -747,6 +767,7 @@ class TboForwardBatchPreparer:
         # TODO we may make padding on both sub-batches to make it slightly more balanced
         value_a = min(tbo_split_token_index, num_token_non_padded)
         value_b = max(0, num_token_non_padded - tbo_split_token_index)
+        # 将父批的真实 token 数拆成左右两部分，便于后续按需补齐 padding
         return torch.tensor([value_a, value_b], dtype=torch.int32).to(
             device=global_server_args_dict["device"], non_blocking=True
         )
@@ -797,6 +818,7 @@ def model_forward_maybe_tbo(
         zero_allocator=zero_allocator,
     )
     layer_input_scatter_mode = layers[0].layer_scatter_modes.layer_input_mode
+    # 针对当前层构造带交错信息的算子序列，供 TBO/非 TBO 路径复用
     operations_strategy = OperationsStrategy.init_new_tbo(
         layers, forward_batch.global_forward_mode
     )
@@ -832,6 +854,7 @@ def _model_forward_tbo(
         )
     )
 
+    # 在 TBO 场景下同时推进两个流水线，并按 delta_stages 控制交错节奏
     with context:
         outputs_arr = execute_overlapped_operations(
             inputs_arr=inputs_arr,
@@ -869,6 +892,7 @@ def _model_forward_tbo_split_inputs(
         context=context,
     )
 
+    # 切分后分别构建两个子批输入，保留 zero_allocator 等额外上下文
     inputs_arr = _model_forward_tbo_split_inputs_raw(
         hidden_states=hidden_states,
         residual=residual,
@@ -894,6 +918,7 @@ def _model_forward_tbo_split_inputs(
             **kwargs,
         )
 
+    # 在两个子批完成必要的通信转换后返回
     return [_post_transform(**inputs) for inputs in inputs_arr]
 
 
@@ -949,6 +974,7 @@ def _model_forward_tbo_merge_outputs(output_a, output_b):
         assert (value_a is None) == (value_b is None)
         if value_a is None:
             return None
+        # 子批输出按 token 维拼接回原顺序
         return torch.concat([value_a, value_b], dim=0)
 
     return _handle_key("hidden_states"), _handle_key("residual")
@@ -967,6 +993,7 @@ class MaybeTboDeepEPDispatcher:
         ]
 
     def _execute(self, name, tbo_subbatch_index: Optional[int] = None, **kwargs):
+        # 正常模式复用第 0 个 dispatcher，TBO 模式按子批选择对应实例
         return getattr(self._inners[tbo_subbatch_index or 0], name)(**kwargs)
 
     def dispatch(self, **kwargs) -> DispatchOutput:

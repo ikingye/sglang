@@ -48,6 +48,7 @@ class FlattenedTensorBucket:
             flattened_tensors: List[torch.Tensor] = [None] * len(named_tensors)
 
             for i, (name, tensor) in enumerate(named_tensors):
+                # 逐个拉平成一维，方便用 concat 构造连续内存块
                 flattened = tensor.flatten()
                 flattened_tensors[i] = flattened
 
@@ -66,6 +67,7 @@ class FlattenedTensorBucket:
                 current_idx += numel
 
             # Concatenate all flattened tensors
+            # 将所有分片拼接为一段连续存储，提升跨进程传输效率
             self.flattened_tensor = torch.cat(flattened_tensors, dim=0)
         else:
             # Initialize from pre-flattened data

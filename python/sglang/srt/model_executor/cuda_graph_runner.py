@@ -72,6 +72,7 @@ def get_is_capture_mode():
 @contextmanager
 def model_capture_mode():
     global is_capture_mode
+    # 进入 capture 区域后，部分算子会根据该标志切换到图录制安全路径
     is_capture_mode = True
 
     yield
@@ -89,6 +90,7 @@ def freeze_gc(enable_cudagraph_gc: bool):
     gc.collect()
     should_freeze = not enable_cudagraph_gc
     if should_freeze:
+        # 禁用 GC 后冻结现有对象，避免图捕获过程中被回收
         gc.freeze()
     try:
         yield
@@ -101,8 +103,10 @@ def _to_torch(model: torch.nn.Module, reverse: bool, num_tokens: int):
     for sub in model._modules.values():
         if isinstance(sub, CustomOp):
             if reverse:
+                # 捕获结束后恢复自定义算子的普通执行路径
                 sub.leave_torch_compile()
             else:
+                # 捕获前通知自定义算子切换到 torch.compile 友好的实现
                 sub.enter_torch_compile(num_tokens=num_tokens)
         if isinstance(sub, torch.nn.Module):
             _to_torch(sub, reverse, num_tokens)
@@ -126,6 +130,7 @@ def patch_model(
             # We found the custom allreduce is much faster than the built-in allreduce in torch,
             # even with ENABLE_INTRA_NODE_COMM=1.
             # tp_group.ca_comm = None
+            # 对 forward 入口施加 torch.compile，以便 capture 图时直接重用编译后的内核
             yield torch.compile(
                 torch.no_grad()(model.forward),
                 mode=os.environ.get(
@@ -145,6 +150,7 @@ def set_torch_compile_config():
     import torch._dynamo.config
     import torch._inductor.config
 
+    # 统一设置 torch.compile 的调优开关，确保捕获阶段能复用最优内核
     torch._inductor.config.coordinate_descent_tuning = True
     torch._inductor.config.triton.unique_kernel_names = True
     torch._inductor.config.fx_graph_cache = True  # Experimental feature to reduce compilation times, will be on by default in future
@@ -162,6 +168,7 @@ def get_batch_sizes_to_capture(model_runner: ModelRunner):
     capture_bs = server_args.cuda_graph_bs
 
     if capture_bs is None:
+        # 未显式指定时按照推理模式动态选择 capture 的 batch 尺寸集合
         if server_args.speculative_algorithm is None:
             if server_args.disable_cuda_graph_padding:
                 capture_bs = list(range(1, 33)) + list(range(48, 161, 16))
@@ -188,6 +195,7 @@ def get_batch_sizes_to_capture(model_runner: ModelRunner):
         # In some cases (e.g., with a small GPU or --max-running-requests), the #max-running-requests
         # is very small. We add more values here to make sure we capture the maximum bs.
         capture_bs += [model_runner.req_to_token_pool.size]
+        # 补充一个等于池容量的 batchsize，保证捕获覆盖所有可能的实时请求规模
 
     mul_base = 1
 
@@ -197,6 +205,7 @@ def get_batch_sizes_to_capture(model_runner: ModelRunner):
     if require_gathered_buffer(server_args):
         mul_base *= get_attention_tp_size()
 
+    # 仅保留能整除并行粒度的批次大小，避免捕获后无法复用
     capture_bs = [bs for bs in capture_bs if bs % mul_base == 0]
 
     if server_args.cuda_graph_max_bs:
@@ -256,6 +265,7 @@ class CudaGraphRunner:
         self.pp_size = model_runner.server_args.pp_size
 
         # Batch sizes to capture
+        # 捕获与 torch.compile 共享一个批次集合，先记录可复用的 bs 阶梯
         self.capture_bs, self.compile_bs = get_batch_sizes_to_capture(model_runner)
         rank0_log(f"Capture cuda graph bs {self.capture_bs}")
         self.capture_forward_mode = ForwardMode.DECODE
@@ -349,6 +359,7 @@ class CudaGraphRunner:
                         ),
                         dtype=self.model_runner.dtype,
                     )
+                    # MLP 同步模式需要先聚合 DP 维度上的 token，再拆回原批次
                 else:
                     assert self.require_attn_tp_gather
                     self.global_num_tokens_gpu = torch.zeros((1,), dtype=torch.int32)
@@ -362,6 +373,7 @@ class CudaGraphRunner:
                         ),
                         dtype=self.model_runner.dtype,
                     )
+                    # 注意力聚合仅需当前 TP 组的 token，缓冲区规模较小
             else:
                 self.global_num_tokens_gpu = None
                 self.global_num_tokens_for_logprob_gpu = None
@@ -375,6 +387,7 @@ class CudaGraphRunner:
                 dtype=torch.bool,
                 device="cuda",
             )
+            # custom_mask 用于自定义正则裁剪等场景，提前分配避免 capture 时动态扩容
             self.next_token_logits_buffer = torch.zeros(
                 (self.max_num_token, self.model_runner.model_config.vocab_size),
                 dtype=torch.float,
@@ -469,6 +482,7 @@ class CudaGraphRunner:
                     if get_tensor_model_parallel_rank() == 0
                     else reversed(self.capture_bs)
                 )
+                # 先捕获大批次，再捕获小批次，尽量共享同一块图缓存
                 for i, bs in enumerate(capture_range):
                     if get_tensor_model_parallel_rank() == 0:
                         avail_mem = get_available_gpu_memory(
@@ -610,6 +624,7 @@ class CudaGraphRunner:
             global_forward_mode=self.capture_forward_mode,
             lora_ids=lora_ids,
         )
+        # 捕获时提前在 ForwardBatch 上执行 TBO 拆分，确保运行与重放保持一致
         self.tbo_plugin.capture_one_batch_size(forward_batch, num_tokens=num_tokens)
 
         if lora_ids is not None:

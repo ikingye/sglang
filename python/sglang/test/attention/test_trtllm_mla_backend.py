@@ -55,7 +55,6 @@ ROPE_SCALING_CONFIG = {
     "rope_type": "deepseek_yarn",
 }
 
-
 def build_rotary_emb(config, device=None):
     from sglang.srt.layers.rotary_embedding import get_rope_wrapper
 
@@ -72,7 +71,6 @@ def build_rotary_emb(config, device=None):
     )
     rotary.cos_sin_cache = rotary.cos_sin_cache.to(dev)
     return rotary
-
 
 # Centralized test cases for different test scenarios
 TEST_CASES = {
@@ -198,7 +196,6 @@ TEST_CASES = {
     ],
 }
 
-
 class MockModelRunner:
     """Minimal fake ModelRunner for testing MLA backends."""
 
@@ -253,7 +250,6 @@ class MockModelRunner:
             enable_memory_saver=False,
         )
 
-
 def compare_outputs(trtllm_out, reference_out, tolerance=1e-2):
     """Compare outputs with detailed analysis."""
 
@@ -298,7 +294,6 @@ def compare_outputs(trtllm_out, reference_out, tolerance=1e-2):
             )
 
     return all_close
-
 
 @unittest.skipIf(
     not torch.cuda.is_available() or not is_flashinfer_available(),
@@ -1089,7 +1084,6 @@ class TestTRTLLMMLA(CustomTestCase):
         self.assertIsNotNone(metadata_3.workspace)
         self.assertIsNotNone(metadata_3.block_kv_indices)
         self.assertEqual(metadata_3.block_kv_indices.shape[0], config["batch_size"])
-
 
 if __name__ == "__main__":
     unittest.main()

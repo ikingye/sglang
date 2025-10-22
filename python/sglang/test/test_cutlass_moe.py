@@ -2,13 +2,12 @@ import argparse
 import time
 
 import torch
-import triton  # Added import
-import triton.testing  # Added import
+import triton
+import triton.testing
 from transformers import AutoConfig
 
 from sglang.srt.layers.moe.cutlass_moe import cutlass_fused_experts_fp8
 from sglang.srt.layers.moe.fused_moe_triton.fused_moe import fused_experts
-
 
 def get_model_config(tp_size: int):
     config = AutoConfig.from_pretrained(
@@ -27,7 +26,6 @@ def get_model_config(tp_size: int):
         "dtype": config.torch_dtype,
         "block_shape": config.quantization_config["weight_block_size"],
     }
-
 
 def to_fp8(tensor: torch.Tensor) -> torch.Tensor:
     """Converts tensor to FP8 E4M3, scaling values to fit the range."""
@@ -49,7 +47,6 @@ def to_fp8(tensor: torch.Tensor) -> torch.Tensor:
         dtype=torch.float8_e4m3fn
     )
     return fp8_tensor
-
 
 def run_test(tp_size, batch_size, model_config, check=False):
     print(f"\n--- Batch Size: {batch_size} ---")
@@ -251,13 +248,11 @@ def run_test(tp_size, batch_size, model_config, check=False):
         assert max_rel_err < 5e-1, f"Relative error too high! {max_rel_err}"
         print("Correctness check passed.")
 
-
 def main(tp_size=8, batch_sizes=[1, 4, 8, 16, 32, 64, 128, 256, 512], check=False):
     model_config = get_model_config(tp_size)
     print("Model Config:", model_config)
     for batch_size in batch_sizes:
         run_test(tp_size, batch_size, model_config, check)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

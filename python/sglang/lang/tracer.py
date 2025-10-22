@@ -21,10 +21,8 @@ from sglang.lang.ir import (
     SglVarScopeEnd,
 )
 
-
 class StopTracing(Exception):
     pass
-
 
 def extract_prefix_by_tracing(program, backend):
     # Create dummy arguments
@@ -50,7 +48,6 @@ def extract_prefix_by_tracing(program, backend):
             break
     return prefix
 
-
 def trace_program(program, arguments, backend):
     # Create dummy backend
     if backend is None:
@@ -70,7 +67,6 @@ def trace_program(program, arguments, backend):
     with TracingScope(tracer):
         tracer.ret_value = program.func(tracer, **arguments)
     return tracer
-
 
 class TracerProgramState(ProgramState):
     def __init__(self, backend, arguments, only_trace_prefix):
@@ -252,7 +248,6 @@ class TracerProgramState(ProgramState):
 
     def __del__(self):
         pass
-
 
 class TracingScope:
     cur_scope = None

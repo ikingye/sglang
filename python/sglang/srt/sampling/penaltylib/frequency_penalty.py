@@ -45,6 +45,7 @@ class BatchedFrequencyPenalizer(_BatchedPenalizer):
             index=output_ids.unsqueeze(1),
             src=self.frequency_penalties,
         )
+        # 将每次出现的 token 累加其对应惩罚系数，实现逐 token 频率统计
 
     def _apply(self, logits: torch.Tensor) -> torch.Tensor:
         logits.sub_(self.cumulated_frequency_penalties)

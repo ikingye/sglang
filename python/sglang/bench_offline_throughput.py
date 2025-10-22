@@ -34,7 +34,6 @@ from sglang.lang.backend.runtime_endpoint import Runtime
 from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.server_args import ServerArgs
 
-
 @dataclasses.dataclass
 class BenchArgs:
     backend: str = "engine"
@@ -193,7 +192,6 @@ class BenchArgs:
         attrs = [attr.name for attr in dataclasses.fields(cls)]
         return cls(**{attr: getattr(args, attr) for attr in attrs})
 
-
 def throughput_test_once(
     backend_name: str,
     backend,
@@ -274,7 +272,6 @@ def throughput_test_once(
 
     return measurement_results
 
-
 def monitor_trace_file(known_files, directory, interval=1):
     print(f"Monitoring {directory} for new trace files...")
 
@@ -305,7 +302,6 @@ def monitor_trace_file(known_files, directory, interval=1):
                 time.sleep(interval)
         if flag:
             break
-
 
 def throughput_test(
     server_args: ServerArgs,
@@ -411,7 +407,6 @@ def throughput_test(
     print("=" * 50)
 
     return result
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

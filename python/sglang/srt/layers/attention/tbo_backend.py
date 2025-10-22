@@ -18,6 +18,7 @@ class TboAttnBackend(AttentionBackend):
 
     @classmethod
     def init_new(cls, creator: Callable[[], AttentionBackend]):
+        # 主实例处理常规批次，两份子实例分别对应两批次重叠后的子批
         return cls(
             primary=creator(),
             children=[creator() for _ in range(2)],
@@ -30,6 +31,7 @@ class TboAttnBackend(AttentionBackend):
                 self.children, forward_batch.tbo_children, strict=True
             ):
                 if forward_batch_child.batch_size > 0:
+                    # 对有效子批单独初始化元数据，保持 KV 索引等与父批一致
                     child.init_forward_metadata(forward_batch=forward_batch_child)
 
     def init_cuda_graph_state(self, max_bs: int, max_num_tokens: int):
@@ -145,6 +147,7 @@ class TboAttnBackend(AttentionBackend):
             num_tokens_child_left > 0 and num_tokens_child_right > 0
         ), f"{num_tokens_child_left=} {num_tokens_child_right=} {forward_mode=} {num_tokens=}"
 
+        # 将捕获/重放需要的公共参数整理后再按照左右子批切片
         common_pre_split_args = dict(
             fn_name=fn_name,
             bs=bs,
@@ -226,6 +229,7 @@ def _init_forward_metadata_cuda_graph_split(
 
     else:
         output_spec_info = None
+    # 构造子批调用所需的基本参数，token/seq 索引均切片到对应范围
     ans = dict(
         bs=output_bs,
         req_pool_indices=req_pool_indices[seq_slice],

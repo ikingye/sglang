@@ -99,6 +99,7 @@ class _State(Enum):
 
 @contextmanager
 def input_blocker_guard_region(send_to_scheduler):
+    # 向调度器发送 BLOCK/UNBLOCK 控制消息，确保临界区内不会接受新请求
     send_to_scheduler.send_pyobj(BlockReqInput(BlockReqType.BLOCK))
     try:
         yield

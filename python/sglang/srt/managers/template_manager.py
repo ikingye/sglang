@@ -12,10 +12,11 @@
 # limitations under the License.
 # ==============================================================================
 """
-Centralized template management for chat templates and completion templates.
+SGLang模板管理器模块
+这个模块提供了聊天模板和代码补全模板的集中管理功能。
 
-This module provides a unified interface for managing both chat conversation templates
-and code completion templates, eliminating global state and improving modularity.
+TemplateManager提供了统一的接口来管理聊天对话模板和代码补全模板，
+消除了全局状态的使用，提高了模块化程度和代码的可维护性。
 """
 
 import json
@@ -44,14 +45,23 @@ logger = logging.getLogger(__name__)
 
 class TemplateManager:
     """
-    Centralized manager for chat and completion templates.
+    SGLang模板集中管理器
 
-    This class encapsulates all template-related state and operations,
-    eliminating the need for global variables and providing a clean
-    interface for template management.
+    这个类封装了所有与模板相关的状态和操作，包括：
+    - 聊天对话模板管理
+    - 代码补全模板管理
+    - 模板格式检测
+    - 推理模式检测
+
+    通过消除全局变量的使用，提供了清晰的模板管理接口。
     """
 
     def __init__(self):
+        """
+        初始化模板管理器
+
+        设置所有模板相关的状态变量为默认值。
+        """
         self._chat_template_name: Optional[str] = None
         self._completion_template_name: Optional[str] = None
         self._jinja_template_content_format: Optional[str] = "openai"
@@ -59,32 +69,55 @@ class TemplateManager:
 
     @property
     def chat_template_name(self) -> Optional[str]:
-        """Get the current chat template name."""
+        """
+        获取当前聊天模板名称
+
+        返回:
+        Optional[str]: 当前聊天模板名称，如果未设置则返回None
+        """
         return self._chat_template_name
 
     @property
     def completion_template_name(self) -> Optional[str]:
-        """Get the current completion template name."""
+        """
+        获取当前补全模板名称
+
+        返回:
+        Optional[str]: 当前补全模板名称，如果未设置则返回None
+        """
         return self._completion_template_name
 
     @property
     def jinja_template_content_format(self) -> Optional[str]:
-        """Get the detected template content format ('string' or 'openai' or None)."""
+        """
+        获取检测到的模板内容格式
+
+        返回:
+        Optional[str]: 模板内容格式，可能的值包括'string'、'openai'或None
+        """
         return self._jinja_template_content_format
 
     @property
     def force_reasoning(self) -> bool:
         """
-        Check if the current chat template enforces reasoning/thinking.
+        检查当前聊天模板是否强制推理/思考模式
 
-        Returns:
-            True if the template contains reasoning patterns like <think> tags
+        返回:
+        bool: 如果模板包含推理模式（如<think>标签）则返回True
         """
         return self._force_reasoning
 
     def _detect_reasoning_pattern(self, template: str) -> bool:
         """
-        Detect if the chat template contains reasoning/thinking patterns.
+        检测聊天模板是否包含推理/思考模式
+
+        通过正则表达式检测模板中是否包含特定的推理模式标识。
+
+        参数:
+        template: 要检测的模板字符串
+
+        返回:
+        bool: 如果检测到推理模式则返回True，否则返回False
         """
         if template is None:
             return False

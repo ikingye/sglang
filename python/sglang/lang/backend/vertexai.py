@@ -16,7 +16,6 @@ try:
 except ImportError as e:
     GenerativeModel = e
 
-
 class VertexAI(BaseBackend):
     def __init__(self, model_name, safety_settings=None):
         super().__init__()

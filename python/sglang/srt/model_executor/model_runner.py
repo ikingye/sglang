@@ -179,6 +179,7 @@ class ModelRunner:
 
         # Apply the rank zero filter to logger
         if not any(isinstance(f, RankZeroFilter) for f in logger.filters):
+            # 仅在单个张量并行分片上打印 INFO，减少日志噪声
             logger.addFilter(RankZeroFilter(tp_rank == 0))
         self.tp_rank = tp_rank
         self.tp_size = tp_size
@@ -215,6 +216,7 @@ class ModelRunner:
             enable_show_time_cost()
 
         # Global vars
+        # 将常用配置写入模块级字典，方便其他组件读取
         global_server_args_dict.update(
             {k: getattr(server_args, k) for k in GLOBAL_SERVER_ARGS_KEYS}
             | {
@@ -229,6 +231,7 @@ class ModelRunner:
         )
 
         # CPU offload
+        # 控制激活溢写到主内存的上限
         set_cpu_offload_max_bytes(int(server_args.cpu_offload_gb * 1024**3))
 
         # Init OpenMP threads binding for CPU
@@ -236,16 +239,20 @@ class ModelRunner:
             self.init_threads_binding()
 
         # Get memory before model loading
+        # 同时校验张量并行各卡的可用显存是否均衡
         min_per_gpu_memory = self.init_torch_distributed()
 
         # Update deep gemm configure
         if deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM:
+            # 针对当前 GPU 自动调优 DeepGEMM 的共享内存与块配置
             deep_gemm_wrapper.update_deep_gemm_config(gpu_id, server_args)
 
         # If it is a draft model, tp_group can be different
+        # 完成分布式初始化与调参后继续构建运行时
         self.initialize(min_per_gpu_memory)
 
         # temporary cached values
+        # 利用 forward 签名判断模型是否支持接收管道代理张量，以兼容混合 PP 场景
         self.support_pp = (
             "pp_proxy_tensors" in inspect.signature(self.model.forward).parameters
         )
@@ -254,11 +261,13 @@ class ModelRunner:
     def initialize(self, min_per_gpu_memory: float):
         server_args = self.server_args
 
+        # 使用辅助器在需要时将张量转存到主机，减少显存压力
         self.memory_saver_adapter = TorchMemorySaverAdapter.create(
             enable=self.server_args.enable_memory_saver
         )
 
         if not self.is_draft_worker:
+            # 初始化专家并行各 rank 共享的专家位置信息
             set_global_expert_location_metadata(
                 compute_initial_expert_location_metadata(server_args, self.model_config)
             )
@@ -269,6 +278,7 @@ class ModelRunner:
                     f"Initial expert_location_metadata: {get_global_expert_location_metadata()}"
                 )
 
+            # 统计动态路由频率，用于日志与自适应均衡策略
             set_global_expert_distribution_recorder(
                 ExpertDistributionRecorder.init_new(
                     server_args,
@@ -278,6 +288,7 @@ class ModelRunner:
             )
 
         self.eplb_manager = (
+            # EPLB 会在运行时重新分配专家以平衡负载
             EPLBManager(self)
             if self.server_args.enable_eplb and (not self.is_draft_worker)
             else None
@@ -285,6 +296,8 @@ class ModelRunner:
         self.expert_location_updater = ExpertLocationUpdater()
 
         # Load the model
+        # 在内存优化上下文中实例化 Transformer 权重
+        # 采样器封装温度/topk 等策略，模型前向完成后可直接复用
         self.sampler = Sampler()
         self.load_model()
 
@@ -294,6 +307,7 @@ class ModelRunner:
             and self.sliding_window_size is not None
             and self.sliding_window_size > 0
         ):
+            # 部分多 token 生成模型需要启用混合 SWA 缓存布局
             architectures = self.model_config.hf_config.architectures
             if architectures and not any("Llama4" in arch for arch in architectures):
                 self.is_hybrid = self.model_config.is_hybrid = True
@@ -310,6 +324,7 @@ class ModelRunner:
         self.start_layer = getattr(self.model, "start_layer", 0)
         self.end_layer = getattr(self.model, "end_layer", model_num_layers)
         self.num_effective_layers = self.end_layer - self.start_layer
+        # 管道并行需要连续层范围，MTP 模型则要求整体分片
         assert (not model_has_mtp_layers) or (
             self.num_effective_layers == model_num_layers
         ), "PP is not compatible with MTP models."
@@ -318,6 +333,7 @@ class ModelRunner:
         torchao_applied = getattr(self.model, "torchao_applied", False)
         # In layered loading, torchao may have been applied
         if not torchao_applied:
+            # TorchAO 会重写线性层，让其使用量化内核
             apply_torchao_config_to_model(
                 self.model, global_server_args_dict["torchao_config"]
             )
@@ -325,19 +341,24 @@ class ModelRunner:
         # Apply torch TP if the model supports it
         supports_torch_tp = getattr(self.model, "supports_torch_tp", False)
         if self.tp_size > 1 and supports_torch_tp:
+            # 将参数分片切换为 PyTorch 原生的张量并行实现
             self.apply_torch_tp()
 
         # Init lora
         if server_args.enable_lora:
+            # LoRA 管理器负责加载适配器并在请求时合并权重
             self.init_lora_manager()
 
         # Init memory pool and attention backends
+        # 按请求/Token 上限预先分配 KV 缓存池
         self.init_memory_pool(
             min_per_gpu_memory,
             server_args.max_running_requests,
             server_args.max_total_tokens,
         )
         if self.device == "cuda":
+            # CUDA 路径需要初始化 cuBLAS 句柄、注意力内核以及 CUDA 图
+            # 先跑一遍微型 GEMM 预热 cublas，避免首次真正调用时阻塞或报错
             self.init_cublas()
             self.init_attention_backend()
             self.init_cuda_graphs()
@@ -348,6 +369,7 @@ class ModelRunner:
 
         # auxiliary hidden capture mode. TODO: expose this to server args?
         if self.spec_algorithm.is_eagle3() and not self.is_draft_worker:
+            # Eagle3 需要挂载辅助草稿头，对应的配置信息需单独加载
             # load draft config
             draft_model_config = ModelConfig.from_server_args(
                 server_args,
@@ -549,17 +571,24 @@ class ModelRunner:
             backend = "gloo"
         elif self.device == "npu":
             backend = "hccl"
+        # 根据运行设备挑选通信后端，避免初始化到不支持的 pg 实现
 
+        # 初始化前记录一次显存占用，方便推断通信栈带来的开销
         before_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
         if not self.server_args.enable_p2p_check:
+            # 某些环境下 P2P 检查会误判连接性，这里允许通过参数跳过
             monkey_patch_p2p_access_check()
 
+        # 优先使用用户显式指定的初始化地址，缺省时回退到本地端口
         if self.server_args.dist_init_addr:
             dist_init_method = f"tcp://{self.server_args.dist_init_addr}"
         else:
             dist_init_method = f"tcp://127.0.0.1:{self.dist_port}"
+        # 启动 torch.distributed 之前先配置自定义 allreduce，以便复用高效通信核
+        # 通过环境变量切换自定义 AllReduce，可在不同通信栈间自由选择
         set_custom_all_reduce(not self.server_args.disable_custom_all_reduce)
         set_mscclpp_all_reduce(self.server_args.enable_mscclpp)
+        # MSCCl++/自定义 AllReduce 会在初始化后覆盖默认通信算子，降低跨卡同步开销
 
         if not self.is_draft_worker:
             if self.device == "cpu":
@@ -576,6 +605,7 @@ class ModelRunner:
                     )
 
             # Only initialize the distributed environment on the target model worker.
+            # 构造张量并行 rank 对应的 Torch 分布式通信上下文
             init_distributed_environment(
                 backend=backend,
                 world_size=self.tp_size * self.pp_size,
@@ -584,12 +614,14 @@ class ModelRunner:
                 distributed_init_method=dist_init_method,
                 timeout=self.server_args.dist_timeout,
             )
+            # 初始化张量/流水线/专家并行组，建立多维度并行拓扑
             initialize_model_parallel(
                 tensor_model_parallel_size=self.tp_size,
                 pipeline_model_parallel_size=self.pp_size,
                 expert_model_parallel_size=self.moe_ep_size,
                 duplicate_tp_group=self.server_args.enable_pdmux,
             )
+            # DP attention 在 TP 组内再细分 token 负载，实现注意力层数据并行
             initialize_dp_attention(
                 enable_dp_attention=self.server_args.enable_dp_attention,
                 tp_rank=self.tp_rank,
@@ -605,6 +637,7 @@ class ModelRunner:
             distributed=get_world_group().world_size > 1,
             cpu_group=get_world_group().cpu_group,
         )
+        # 记录启用通信后集群可见的最小显存，作为后续容量校验的基准值
         self.tp_group = get_tp_group()
         self.attention_tp_group = get_attention_tp_group()
 
@@ -636,9 +669,11 @@ class ModelRunner:
 
         # This can reduce thread conflicts and speed up weight loading.
         if self.device != "cpu":
+            # 加载权重时关闭算子级并行，避免 I/O 竞争
             torch.set_num_threads(1)
         if self.device == "cuda":
             if torch.cuda.get_device_capability()[0] < 8:
+                # 旧架构缺少 BF16 与高效张量核，只能退回 FP16 内核
                 logger.info(
                     "Compute capability below sm80. Use float16 due to lack of bfloat16 support."
                 )
@@ -655,7 +690,9 @@ class ModelRunner:
             download_dir=self.server_args.download_dir,
             model_loader_extra_config=self.server_args.model_loader_extra_config,
         )
+        # LoadConfig 整合资源位置和动态参数，便于 model loader 统一访问
         if self.device == "cpu":
+            # CPU 路径下需要根据张量并行大小对权重切分参数进行再对齐
             self.model_config = adjust_config_with_unaligned_cpu_tp(
                 self.model_config, self.load_config, self.tp_size
             )
@@ -664,15 +701,19 @@ class ModelRunner:
 
         # Load the model
         # Remove monkey_patch when linear.py quant remove dependencies with vllm
+        # 临时复用 vLLM 的辅助方法，以便正确加载量化权重
         monkey_patch_vllm_parallel_state()
         monkey_patch_isinstance_for_vllm_base_layer()
 
         with self.memory_saver_adapter.region(GPU_MEMORY_TYPE_WEIGHTS):
+            # 该内存保护区会在加载前锁定权重预算，避免与运行时缓存抢占
+            # get_model 会真正构建 HuggingFace/sglang 的模型实例
             self.model = get_model(
                 model_config=self.model_config,
                 load_config=self.load_config,
                 device_config=DeviceConfig(self.device),
             )
+        # 加载结束后恢复 vLLM 的补丁，避免影响后续流程
         monkey_patch_vllm_parallel_state(reverse=True)
         monkey_patch_isinstance_for_vllm_base_layer(reverse=True)
 
@@ -702,6 +743,7 @@ class ModelRunner:
         # Parse other args
         self.sliding_window_size = None
         if hasattr(self.model, "get_attention_sliding_window_size"):
+            # 优先采用模型给出的滑动窗口设置（如 GAU/GQA）
             self.sliding_window_size = self.model.get_attention_sliding_window_size()
         elif self.model_config.attention_chunk_size is not None:
             self.sliding_window_size = self.model_config.attention_chunk_size
@@ -712,6 +754,7 @@ class ModelRunner:
         self.dtype = self.model_config.dtype
 
         after_avail_memory = get_available_gpu_memory(self.device, self.gpu_id)
+        # 记录权重加载过程实际消耗的显存，以便后续动态判断缓存余量
         self.weight_load_mem_usage = before_avail_memory - after_avail_memory
         logger.info(
             f"Load weight end. "
@@ -723,12 +766,14 @@ class ModelRunner:
 
         # Handle the case where some ranks do not finish loading.
         try:
+            # 等待所有张量并行 rank 完成权重加载，防止部分卡提前进入推理
             dist.monitored_barrier(
                 group=get_tp_group().cpu_group,
                 timeout=datetime.timedelta(seconds=UNBALANCED_MODEL_LOADING_TIMEOUT_S),
                 wait_all_ranks=True,
             )
         except RuntimeError:
+            # 当本 rank 成功、其他 rank 失败时给出更明确的错误信息
             raise ValueError(
                 f"TP rank {self.tp_rank} could finish the model loading, but there are other ranks that didn't finish loading. It is likely due to unexpected failures (e.g., OOM) or a slow node."
             ) from None
@@ -1053,9 +1098,11 @@ class ModelRunner:
                 * 2
                 * torch._utils._element_size(self.kv_cache_dtype)
             )
+        # 将静态划定给权重的显存从当前可用显存中扣除，只留下运行时真正能用的空间
         rest_memory = available_gpu_memory - total_gpu_memory * (
             1 - self.mem_fraction_static
         )
+        # 单 token 占用的 KV 空间为 cell_size 字节，除法得到理论可容纳的最大 token 数
         max_num_token = int(rest_memory * (1 << 30) // cell_size)
         return max_num_token
 
@@ -1164,9 +1211,11 @@ class ModelRunner:
                 f"Unsupported kv_cache_dtype: {self.server_args.kv_cache_dtype}."
             )
 
+        # 根据显存上限估算本 worker 能承载的 token 数量，后续调度与缓存均以此为基准
         self.max_total_num_tokens = self.profile_max_num_token(total_gpu_memory)
 
         if max_num_reqs is None:
+            # 根据上下文长度反推请求上限，既避免稀疏时浪费缓存，也防止批次过多拖垮调度
             max_num_reqs = min(
                 max(
                     int(
@@ -1182,11 +1231,13 @@ class ModelRunner:
 
         if not self.spec_algorithm.is_none():
             if self.is_draft_worker:
+                # 草稿分支单独限制 KV 大小，避免与主模型互相挤占
                 self.max_total_num_tokens = self.server_args.draft_runner_cache_size
                 max_num_reqs = self.server_args.max_num_reqs
             else:
                 # We are sharing the `token_to_kv_pool`, and both verify and draft tokens
                 # can be concurrently allocated, so we should give a headroom for it.
+                # 这里为 draft / verify 预留缓冲数，防止推测解码途中出现 KV 缺页
                 self.server_args.draft_runner_cache_size = (
                     self.max_total_num_tokens
                     # draft
@@ -1217,6 +1268,7 @@ class ModelRunner:
             // self.server_args.page_size
             * self.server_args.page_size
         )
+        # 将可用 token 数截断到 page_size 的整数倍，方便分页分配与回收
         # create token size for hybrid cache
         if self.is_hybrid:
             self.set_num_token_hybrid()
@@ -1232,6 +1284,7 @@ class ModelRunner:
 
                 # subscribe memory for pre-allocated requests
                 # if max_num_reqs <= 32, we pre-allocate 2x requests
+                # 预先分配额外请求槽位，降低高并发时的申请开销
                 pre_alloc_size = max_num_reqs * 2 if max_num_reqs <= 32 else 0
                 self.req_to_token_pool = DecodeReqToTokenPool(
                     size=max_num_reqs,
@@ -1378,6 +1431,7 @@ class ModelRunner:
         else:
             assert self.is_draft_worker
 
+        # 初始化完成后记录剩余显存，便于排查内存碎片或空间不足问题
         logger.info(
             f"Memory pool end. "
             f"avail mem={get_available_gpu_memory(self.device, self.gpu_id):.2f} GB"
@@ -1588,6 +1642,7 @@ class ModelRunner:
         logger.info(
             f"Capture cuda graph begin. This can take up to several minutes. avail mem={before_mem:.2f} GB"
         )
+        # 捕获阶段会走一遍解码计算图，并将 kernel/参数固化为 CUDA Graph
         self.cuda_graph_runner = CudaGraphRunner(self)
         after_mem = get_available_gpu_memory(self.device, self.gpu_id)
         self.cuda_graph_mem_usage = before_mem - after_mem
@@ -1610,10 +1665,12 @@ class ModelRunner:
                 f"it is suggested to use -tp 2 and bind tp rank 0 to core 0-31 and tp rank 1 to core 32-63. "
                 f"This is the default behavior if SGLANG_CPU_OMP_THREADS_BIND is not set and it is the same as setting SGLANG_CPU_OMP_THREADS_BIND=0-31|32-63. "
                 f"If you do need tp_size to be larger than the number of numa nodes, you could set SGLANG_CPU_OMP_THREADS_BIND explicitly for example SGLANG_CPU_OMP_THREADS_BIND=0-15|16-31|32-47|48-63 and run with -tp 4. "
+
                 f"If you don't want each tp rank to use all the cores on one numa node, you could set for example SGLANG_CPU_OMP_THREADS_BIND=0-15|32-47 and run with -tp 2."
             )
             if self.tp_size < n_numa_node:
                 logger.warning(
+
                     f"Detected the current machine has {n_numa_node} numa nodes available, but tp_size is set to {self.tp_size}, so only {self.tp_size} numa nodes are used."
                 )
             self.local_omp_cpuid = cpu_ids_by_node[self.tp_rank]
@@ -1713,6 +1770,7 @@ class ModelRunner:
     ) -> Tuple[Union[LogitsProcessorOutput, PPProxyTensors], bool]:
         self.forward_pass_id += 1
 
+        # 记录一次前向的信息，便于在专家并行场景统计路由负载情况
         with get_global_expert_distribution_recorder().with_forward_pass(
             self.forward_pass_id,
             forward_batch,
@@ -1744,6 +1802,7 @@ class ModelRunner:
             and self.cuda_graph_runner.can_run(forward_batch)
         )
         if can_run_cuda_graph:
+            # 能命中 CUDA Graph 时直接复用已捕获的执行图，跳过 Python 调度与 kernel 选择
             ret = self.cuda_graph_runner.replay(
                 forward_batch,
                 skip_attn_backend_init=skip_attn_backend_init,
@@ -1753,6 +1812,7 @@ class ModelRunner:
 
         # For MLP sync
         if forward_batch.global_num_tokens_cpu is not None:
+            # MLP 同步模式下需要提前重排 batch，保证各 rank token 对齐
             forward_batch.prepare_mlp_sync_batch(self)
 
         if forward_batch.forward_mode.is_decode():
@@ -1791,9 +1851,11 @@ class ModelRunner:
             # Overlap mode: the function update_regex_vocab_mask was executed
             # in process_batch_result of the last batch.
             if sampling_info.grammars:
+                # 存在约束语法时等待上一次 forward 中的后台线程完成掩码计算
                 sampling_info.sampling_info_done.wait()
         else:
             # Normal mode: Put CPU-heavy tasks here. They will be overlapped with the forward pass.
+            # 将正则/JSON Schema 的词表裁剪放在采样前执行，以掩盖 CPU 延迟
             sampling_info.update_regex_vocab_mask()
         sampling_info.apply_logits_bias(logits_output.next_token_logits)
 
@@ -1813,6 +1875,7 @@ class ModelRunner:
         """
         # For duplex models with multiple output streams.
         if isinstance(logits_output, tuple):
+            # 双输出流（如多模态、草稿头）需要对每个分支单独采样再拼接
             return torch.stack(
                 [self.sample(values, forward_batch) for values in logits_output],
                 axis=-1,

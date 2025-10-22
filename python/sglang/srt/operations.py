@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Generator, List, Sequence, Union
 
 import torch
 
+# 控制是否在阶段边界使用 torch/nvtx 的标记范围
 _ENABLE_PROFILE = bool(int(os.environ.get("SGLANG_OPERATIONS_ENABLE_PROFILE", "0")))
 
 if _ENABLE_PROFILE:
@@ -12,6 +13,7 @@ if _ENABLE_PROFILE:
 
 
 def execute_operations(inputs, operations):
+    # 将由 YieldOperation 分隔的算子分组成阶段并串行执行
     stages = _convert_operations_to_stages(operations)
     executor = _StageExecutor("primary", stages, inputs=inputs)
     for _ in range(executor.num_stages):
@@ -25,7 +27,8 @@ def execute_overlapped_operations(
     operations_arr: Sequence,
     delta_stages: Sequence[int],
 ) -> Sequence:
-    # Make it explicit for clarity; if we need multi-batch overlap, this can be generalized
+    # 并行推进两个流水线，通过阶段错位来覆盖长耗时阶段
+    # 为了便于理解，这里只展开双批次场景；需要多批次时可按同样方式扩展
     inputs_a, inputs_b = inputs_arr
     operations_a, operations_b = operations_arr
     delta_stage_a, delta_stage_b = delta_stages
@@ -38,6 +41,7 @@ def execute_overlapped_operations(
     executor_b = _StageExecutor("b", stages_b, inputs=inputs_b)
 
     for _ in range(delta_stage):
+        # 先让流水线 A 单独跑若干阶段，为后续交错腾出空窗期
         executor_a.next()
 
     for _ in range(executor_a.num_stages - delta_stage):
@@ -45,6 +49,7 @@ def execute_overlapped_operations(
         executor_b.next()
 
     for _ in range(delta_stage):
+        # 最后补齐 B pipeline 落下的阶段，确保输出同步完毕
         executor_b.next()
 
     assert executor_a.done and executor_b.done
@@ -70,6 +75,7 @@ class _StageExecutor:
         self._debug_name = debug_name
         self._stages = stages
         self._index = 0
+        # 跨阶段共享的状态对象，每个算子都可以往里写入临时结果
         self._stage_state = _StateDict()
         self._stage_output = inputs
 
@@ -81,6 +87,7 @@ class _StageExecutor:
         with _annotate_region(debug_name=f"{self._debug_name}{self._index}"):
             for op in stage:
                 with _annotate_region(debug_name=op.debug_name):
+                    # 每个算子都会拿到共享的可变状态以及上一阶段产出的输入
                     self._stage_output = op.fn(
                         state=self._stage_state,
                         **(
@@ -107,6 +114,7 @@ class _StageExecutor:
 @contextmanager
 def _annotate_region(debug_name):
     if _ENABLE_PROFILE:
+        # 启用性能分析时同时打上 PyTorch 和 NVTX 的标记范围
         with torch.autograd.profiler.record_function(debug_name):
             with nvtx.annotate(debug_name):
                 yield
@@ -115,6 +123,7 @@ def _annotate_region(debug_name):
 
 
 class _StateDict:
+    # 轻量级对象，将字典内容以属性形式暴露，方便算子共享状态
     def __init__(self):
         self._data = {}
 
@@ -153,6 +162,7 @@ class _StateDict:
 
 
 def _convert_operations_to_stages(operations: List[Operation]) -> List[Stage]:
+    # 将扁平的算子序列按 YieldOperation 切分成多个阶段
     operations = _decorate_operations(operations)
     operation_chunks = list(
         _chunk_by_separator(operations, lambda op: isinstance(op, YieldOperation))
@@ -164,6 +174,7 @@ def _convert_operations_to_stages(operations: List[Operation]) -> List[Stage]:
 def _chunk_by_separator(
     items: List[Any], is_separator: Callable[[Any], bool]
 ) -> Generator[List[Any], None, None]:
+    # 流式分块器，按分隔符输出其间累计的元素
     pending_items = []
     for item in items:
         if is_separator(item):
@@ -182,6 +193,7 @@ def _decorate_operations(operations: List[Operation], debug_name_prefix: str = "
 def _decorate_operation(operation: Operation, debug_name_prefix: str):
     if isinstance(operation, YieldOperation):
         return operation
+    # 为可调用对象生成稳定的调试名，便于分析与日志记录
     return ExecutionOperation(
         debug_name=debug_name_prefix
         + getattr(operation, "__name__", "unknown").replace("op_", ""),

@@ -25,6 +25,7 @@ class TorchMemorySaverAdapter(ABC):
                 "torch-memory-saver is not installed. Please install it "
                 "via `pip3 install torch-memory-saver`. "
             )
+            # 用户显式打开但缺包时直接抛出异常，防止误以为内存规避已生效
             raise import_error
         return (
             _TorchMemorySaverAdapterReal() if enable else _TorchMemorySaverAdapterNoop()
@@ -36,6 +37,7 @@ class TorchMemorySaverAdapter(ABC):
                 f"`{caller_name}` will not save memory because torch_memory_saver is not enabled. "
                 f"Potential causes: `enable_memory_saver` is false, or torch_memory_saver has installation issues."
             )
+            # 仅告警不抛错，方便在可选依赖缺失时继续执行
 
     def configure_subprocess(self):
         raise NotImplementedError
@@ -58,9 +60,11 @@ class _TorchMemorySaverAdapterReal(TorchMemorySaverAdapter):
     """Adapter for TorchMemorySaver with tag-based control"""
 
     def configure_subprocess(self):
+        # 真正创建子进程前需要让 torch-memory-saver 注入钩子
         return torch_memory_saver.configure_subprocess()
 
     def region(self, tag: str):
+        # 用 tag 区分不同的保存区间，便于分段释放
         return _memory_saver.region(tag=tag)
 
     def pause(self, tag: str):

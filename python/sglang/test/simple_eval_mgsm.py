@@ -87,7 +87,6 @@ LANG_TO_ANSWER_PREFIX = {
     "zh": "答案",
 }
 
-
 def parse_answer(answer: str, answer_prefix: str) -> str:
     if answer_prefix not in answer:
         return ""
@@ -101,7 +100,6 @@ def parse_answer(answer: str, answer_prefix: str) -> str:
     # or an empty string if there were no numbers
     return numbers[-1].rstrip(".") if numbers else ""
 
-
 def score_mgsm(target: str, prediction: str) -> bool:
     if "." in prediction:
         prediction = prediction.rstrip("0").rstrip(".")
@@ -110,7 +108,6 @@ def score_mgsm(target: str, prediction: str) -> bool:
     prediction = prediction.replace(",", "")
 
     return target == prediction
-
 
 def get_lang_examples(lang: str) -> list[dict[str, str]]:
     fpath = LANG_TO_FPATH[lang]
@@ -124,7 +121,6 @@ def get_lang_examples(lang: str) -> list[dict[str, str]]:
             examples.append({"inputs": inputs, "targets": targets, "lang": lang})
     return examples
 
-
 def get_all_examples() -> list[dict[str, str]]:
     examples = []
     for lang in ALL_LANGUAGES:
@@ -132,7 +128,6 @@ def get_all_examples() -> list[dict[str, str]]:
             continue
         examples += get_lang_examples(lang)
     return examples
-
 
 class MGSMEval(Eval):
     def __init__(

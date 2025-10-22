@@ -92,6 +92,7 @@ class ForwardMode(IntEnum):
         return self.is_extend()
 
     def is_extend(self):
+        # 只要批次需要追加上下文（无论草稿、验证还是常规扩展）都落入这一分支
         return (
             self == ForwardMode.EXTEND
             or self == ForwardMode.MIXED
@@ -125,6 +126,7 @@ class ForwardMode(IntEnum):
         )
 
     def is_cuda_graph(self):
+        # 仅 decode/verify/idle 批次会尝试复用 CUDA 图
         return (
             self == ForwardMode.DECODE
             or self == ForwardMode.TARGET_VERIFY
@@ -166,21 +168,22 @@ class ForwardBatch:
 
     # The forward mode
     forward_mode: ForwardMode
-    # The batch size
+    # The batch size / 当前批包含的请求数
     batch_size: int
-    # The input ids
+    # The input ids / 拉平成单批的 token id 列表
     input_ids: torch.Tensor
-    # The indices of requests in the req_to_token_pool
+    # The indices of requests in the req_to_token_pool / KV 池中请求槽的下标
     req_pool_indices: torch.Tensor
-    # The sequence length
+    # The sequence length / 每条序列对应的 token 数
     seq_lens: torch.Tensor
-    # The indices of output tokens in the token_to_kv_pool
+    # The indices of output tokens in the token_to_kv_pool / 下一步追加 token 的 KV 槽位
     out_cache_loc: torch.Tensor
 
     # The sum of all sequence lengths
     seq_lens_sum: int
+    # 累加后的 token 数，可用于预估计算量和规整 CUDA 图输入
 
-    # The original sequence length without being chunked. Qwen-1M related.
+    # The original sequence length without being chunked. Qwen-1M related. / Chunk 拆分前的原始长度
     orig_seq_lens: Optional[torch.Tensor] = None
 
     # Optional seq_lens on cpu
@@ -193,6 +196,7 @@ class ForwardBatch:
 
     # For logits and logprobs post processing
     next_token_logits_buffer: torch.Tensor = None
+    # 存放上一轮的候选 logits，供自定义后处理或流式输出复用
     temp_scaled_logprobs: bool = False
     temperature: torch.Tensor = None
     top_p_normalized_logprobs: bool = False
@@ -310,6 +314,7 @@ class ForwardBatch:
     ):
         from sglang.srt.two_batch_overlap import TboForwardBatchPreparer
 
+        # Scheduler 端的 ModelWorkerBatch 会在这里转换成 GPU 运行所需的 ForwardBatch
         ret = cls(
             forward_mode=batch.forward_mode,
             batch_size=len(batch.seq_lens),
@@ -346,11 +351,13 @@ class ForwardBatch:
         device = model_runner.device
 
         if batch.extend_input_logprob_token_ids is not None:
+            # 日志概率只在 CPU 聚合，这里提前搬运到 GPU 供后端核函数读取
             ret.extend_input_logprob_token_ids_gpu = (
                 batch.extend_input_logprob_token_ids.to(device, non_blocking=True)
             )
 
         if enable_num_token_non_padded(model_runner.server_args):
+            # 记录 padding 前的 token 数，供推断真实上下文长度
             ret.num_token_non_padded = torch.tensor(
                 len(batch.input_ids), dtype=torch.int32
             ).to(device, non_blocking=True)
@@ -365,6 +372,7 @@ class ForwardBatch:
             assert batch.global_num_tokens_for_logprob is not None
             # process global_num_tokens and global_num_tokens_for_logprob
             if batch.spec_info is not None:
+                # Eagle 模式下，global_num_tokens 以“批”为单位统计，这里换算成真实 token 数
                 if isinstance(batch.spec_info, EagleDraftInput):
                     global_num_tokens = [
                         x * batch.spec_info.num_tokens_per_batch
@@ -389,16 +397,19 @@ class ForwardBatch:
                 global_num_tokens_for_logprob = batch.global_num_tokens_for_logprob
 
             ret.global_num_tokens_cpu = global_num_tokens
+            # 复制到 GPU 侧供注意力/MLP 核函数读取，同时保持异步数据流
             ret.global_num_tokens_gpu = torch.tensor(
                 global_num_tokens, dtype=torch.int64
             ).to(device, non_blocking=True)
 
             ret.global_num_tokens_for_logprob_cpu = global_num_tokens_for_logprob
+            # 日志概率的统计量也需要放到 GPU，方便并行规约
             ret.global_num_tokens_for_logprob_gpu = torch.tensor(
                 global_num_tokens_for_logprob, dtype=torch.int64
             ).to(device, non_blocking=True)
 
         if ret.forward_mode.is_idle():
+            # 空批仍需初始化部分结构，保证调度器逻辑统一
             ret.positions = torch.empty((0,), dtype=torch.int64, device=device)
             TboForwardBatchPreparer.prepare(
                 ret, is_draft_worker=model_runner.is_draft_worker
@@ -410,11 +421,13 @@ class ForwardBatch:
             ret.spec_info is not None
             and getattr(ret.spec_info, "positions", None) is not None
         ):
+            # 推测解码可以直接提供位置编码，避免重复调用 compute_position
             ret.positions = ret.spec_info.positions
 
         # Init position information
         if ret.forward_mode.is_decode():
             if ret.positions is None:
+                # 解码阶段只需要拿到每条序列的尾部位置
                 ret.positions = clamp_position(batch.seq_lens)
         else:
             ret.extend_seq_lens = torch.tensor(
@@ -424,6 +437,7 @@ class ForwardBatch:
                 batch.extend_prefix_lens, dtype=torch.int32
             ).to(device, non_blocking=True)
             ret.extend_num_tokens = batch.extend_num_tokens
+            # compute_position 会根据注意力后端选择合适的 offset/stride 计算逻辑
             positions, ret.extend_start_loc = compute_position(
                 model_runner.server_args.attention_backend,
                 ret.extend_prefix_lens,
@@ -431,6 +445,7 @@ class ForwardBatch:
                 ret.extend_num_tokens,
             )
             if ret.positions is None:
+                # Prefill 没有外部提供位置时，使用按序展开后的绝对位置编码
                 ret.positions = positions
             ret.extend_prefix_lens_cpu = batch.extend_prefix_lens
             ret.extend_seq_lens_cpu = batch.extend_seq_lens
@@ -441,8 +456,10 @@ class ForwardBatch:
 
         # Init lora information
         if model_runner.server_args.enable_lora:
+            # LoRA 需要把批次绑定到对应的权重增量
             model_runner.lora_manager.prepare_lora_batch(ret)
 
+        # 根据是否启用两批次重叠，对当前批次的 KV/位置进行重排
         TboForwardBatchPreparer.prepare(
             ret, is_draft_worker=model_runner.is_draft_worker
         )
@@ -520,6 +537,7 @@ class ForwardBatch:
                 next_input_positions = []
                 for mrope_position_delta in mrope_position_deltas:
                     # batched deltas needs to be processed separately
+                    # 多模态增量是分块存储的，需要逐块推算旋转位置
                     # Convert list of lists to tensor with shape [3, seq_len]
                     next_input_positions += [
                         MRotaryEmbedding.get_next_input_positions(
@@ -537,6 +555,7 @@ class ForwardBatch:
                 )
                 if mm_input is None:
                     # text only
+                    # 纯文本时直接生成线性递增的位置索引
                     mrope_positions = torch.tensor(
                         [
                             [
@@ -573,6 +592,7 @@ class ForwardBatch:
         self.attn_attend_prefix_cache = attn_attend_prefix_cache
 
     def prepare_chunked_kv_indices(self, device: torch.device):
+        # 预先为每个 chunk 生成 KV 索引映射，便于注意力后端直接定位缓存页
         self.prefix_chunk_kv_indices = []
         for idx in range(self.num_prefix_chunks):
             chunk_starts = self.prefix_chunk_starts[idx]
@@ -911,6 +931,7 @@ def compute_position(
     extend_seq_lens: torch.Tensor,
     extend_seq_lens_sum: int,
 ):
+    # 根据注意力后端选择 triton/torch 两种实现，生成扩展阶段的绝对位置编码
     if support_triton(attn_backend):
         positions, extend_start_loc = compute_position_triton(
             extend_prefix_lens,
@@ -967,6 +988,7 @@ def compute_position_kernel(
     # NOTE: This can be slow for large bs
     cumsum_start = tl.cast(0, tl.int64)
     for i in range(pid):
+        # Triton 暂不支持前缀和原语，这里手动累加得到当前序列的写入起点
         cumsum_start += tl.load(extend_seq_lens + i)
 
     num_loop = tl.cdiv(seq_len, BLOCK_SIZE)

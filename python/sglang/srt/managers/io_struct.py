@@ -12,8 +12,11 @@
 # limitations under the License.
 # ==============================================================================
 """
-The definition of objects transferred between different
-processes (TokenizerManager, DetokenizerManager, Scheduler).
+SGLang IO结构体定义模块
+这个模块定义了在不同进程间传输的对象结构体。
+
+包括TokenizerManager、DetokenizerManager、Scheduler等进程间
+通信所需的数据结构定义，支持文本、图像、音频、视频等多模态输入。
 """
 
 import copy
@@ -28,7 +31,6 @@ from sglang.srt.multimodal.mm_utils import has_valid_data
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.utils import ImageData
 
-# Handle serialization of Image for pydantic
 if TYPE_CHECKING:
     from PIL.Image import Image
 else:
@@ -37,6 +39,12 @@ else:
 
 @dataclass
 class SessionParams:
+    """
+    会话参数数据类
+
+    定义了会话相关的参数，包括会话ID、请求ID、偏移量等。
+    用于管理用户会话的状态和配置。
+    """
     id: Optional[str] = None
     rid: Optional[str] = None
     offset: Optional[int] = None
@@ -44,16 +52,14 @@ class SessionParams:
     drop_previous_output: Optional[bool] = None
 
 
-# Type definitions for multimodal input data
-# Individual data item types for each modality
 ImageDataInputItem = Union[Image, str, ImageData, Dict]
 AudioDataInputItem = Union[str, Dict]
 VideoDataInputItem = Union[str, Dict]
-# Union type for any multimodal data item
+
 MultimodalDataInputItem = Union[
     ImageDataInputItem, VideoDataInputItem, AudioDataInputItem
 ]
-# Format types supporting single items, lists, or nested lists for batch processing
+
 MultimodalDataInputFormat = Union[
     List[List[MultimodalDataInputItem]],
     List[MultimodalDataInputItem],

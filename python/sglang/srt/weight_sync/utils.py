@@ -36,6 +36,7 @@ async def update_weights(
     from sglang.srt.patch_torch import monkey_patch_torch_reductions
 
     monkey_patch_torch_reductions()
+    # runtime 中会依赖 torch 的通信原语；提前打补丁以兼容多种后端实现
 
     # [
     #   (name0, ipc_tensor0_tp0),
@@ -52,6 +53,7 @@ async def update_weights(
     ]
 
     if infer_tp_rank == 0:
+        # 约定 rank0 作为聚合者，收集所有张量分片
         gathered_serialized_batches = [None for _ in range(infer_tp_size)]
     else:
         gathered_serialized_batches = None
@@ -74,6 +76,7 @@ async def update_weights(
         #   ( (name0, ipc_tensor0_tp0), (name0, ipc_tensor0_tp1) ),
         #   ( (name1, ipc_tensor1_tp0), (name1, ipc_tensor1_tp1) ),
         # ]
+        # zip(*) 将不同 rank 的同名张量拼成逻辑整体，方便后续重建
         logical_tensors = zip(*gathered_serialized_batches, strict=True)
 
         named_tensors = [
@@ -115,5 +118,6 @@ def _preprocess_tensor_for_update_weights(tensor: torch.Tensor):
         The full tensor if it is a DTensor, otherwise the original tensor.
     """
     if isinstance(tensor, DTensor):
+        # FSDP/DTensor 可能切分了权重，full_tensor() 将其还原为完整副本
         return tensor.full_tensor()
     return tensor

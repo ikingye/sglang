@@ -14,7 +14,6 @@ from sglang.test.simple_eval_common import (
     set_ulimit,
 )
 
-
 def run_eval(args):
     set_ulimit()
 
@@ -95,7 +94,6 @@ def run_eval(args):
     print(f"Score: {metrics['score']:.3f}")
 
     return metrics
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

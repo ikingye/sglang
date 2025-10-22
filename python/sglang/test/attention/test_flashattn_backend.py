@@ -11,7 +11,6 @@ from sglang.srt.model_executor.forward_batch_info import ForwardBatch, ForwardMo
 from sglang.srt.model_executor.model_runner import ServerArgs
 from sglang.test.test_utils import CustomTestCase
 
-
 class MockModelRunner:
     def __init__(
         self,
@@ -67,7 +66,6 @@ class MockModelRunner:
         )
         # Required by torch native backend
         self.server_args = ServerArgs(model_path="fake_model_path")
-
 
 @unittest.skipIf(not torch.cuda.is_available(), "Test requires CUDA")
 class TestFlashAttentionBackend(CustomTestCase):
@@ -344,7 +342,6 @@ class TestFlashAttentionBackend(CustomTestCase):
     def test_forward_decode_with_page_size_greater_than_1(self):
         """Test decode operation with page size greater than 1."""
         self._run_attention_test(ForwardMode.DECODE, q_len=1, page_size=64)
-
 
 if __name__ == "__main__":
     unittest.main()

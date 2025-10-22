@@ -45,6 +45,7 @@ class BaseTokenToKVPoolAllocator(abc.ABC):
         kvcache: KVCache,
         need_sort: bool,
     ):
+        # 记录 KV 池容量、页大小以及是否需要排序回收，供子类实现具体策略
         self.size = size
         self.page_size = page_size
         self.dtype = dtype
@@ -61,36 +62,44 @@ class BaseTokenToKVPoolAllocator(abc.ABC):
         return ""
 
     def available_size(self):
+        # 以页为单位统计当前可用容量
         return (len(self.free_pages) + len(self.release_pages)) * self.page_size
 
     def get_kvcache(self):
         return self._kvcache
 
     def restore_state(self, state):
+        # 在 speculative / overlap 等场景下可保存并回滚 allocator 状态
         self.free_pages, self.release_pages = state
 
     def backup_state(self):
+        # 只保存引用即可，调用方需确保在回滚前不再修改原张量
         return (self.free_pages, self.release_pages)
 
     def free_group_begin(self):
+        # 启动批量 free 模式，先收集回收页，等结束后一次性写回
         self.is_not_in_free_group = False
         self.free_group = []
 
     def free_group_end(self):
         self.is_not_in_free_group = True
         if self.free_group:
+            # 将批量累积的页号合并成单个张量再释放，减少 cat 次数
             self.free(torch.cat(self.free_group))
 
     def estimated_num_new_pages(self, bs, extend_num_tokens):
+        # 估算一个批次在分页模式下需要额外占用的页数，用于提前判断内存是否足够
         return bs * ((extend_num_tokens + self.page_size - 1) // self.page_size)
 
     def merge_and_sort_free(self):
+        # 当释放页过多时归并并排序，保持分配连续性
         if len(self.release_pages) > 0:
             self.free_pages = torch.cat((self.free_pages, self.release_pages))
             self.free_pages, _ = torch.sort(self.free_pages)
             self.release_pages = torch.empty(
                 (0,), dtype=self.release_pages.dtype, device=self.device
             )
+            # 排序后的 free_pages 保证后续分配尽可能连续，减少碎片
 
     def get_cpu_copy(self, *args, **kwargs):
         # FIXME: reuse the get_cpu_copy after paged allocator is implemented
@@ -135,6 +144,7 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
 
     def clear(self):
         # The padded slot 0 is used for writing dummy outputs from padded tokens.
+        # 注意下标 0 预留给 padding，真实可用范围从 1 开始
         self.free_pages = torch.arange(
             1, self.size + 1, dtype=torch.int64, device=self.device
         )
@@ -152,6 +162,7 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         if need_size > len(self.free_pages):
             return None
 
+        # 直接切片前 need_size 个空闲槽位，加速批量分配
         select_index = self.free_pages[:need_size]
         self.free_pages = self.free_pages[need_size:]
         return select_index
@@ -166,6 +177,7 @@ class TokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
             else:
                 self.free_pages = torch.cat((self.free_pages, free_index))
         else:
+            # 在批量模式下暂存，等 free_group_end 时再写回
             self.free_group.append(free_index)
 
     def get_cpu_copy(self, indices):
@@ -191,6 +203,7 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         assert isinstance(kvcache, SWAKVPool)
         self._size_full = size
         self._size_swa = size_swa
+        # 全精度与 SWA 分别维护独立的页分配器
         self.full_attn_allocator = TokenToKVPoolAllocator(
             size,
             dtype,
@@ -252,6 +265,7 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         if need_size > self.swa_attn_allocator.available_size():
             return None
 
+        # Full/SWA 双池同步分配，并记录两者之间的索引映射
         alloc_full_indices = self.full_attn_allocator.alloc(need_size)
         alloc_swa_indices = self.swa_attn_allocator.alloc(need_size)
         self.full_to_swa_index_mapping[alloc_full_indices] = alloc_swa_indices
@@ -271,6 +285,7 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         assert self.swa_attn_allocator.available_size() <= self.swa_attn_allocator.size
 
     def free_swa(self, free_index: torch.Tensor):
+        # 将 full 索引映射回 swa 池，清理并重置映射表
         swa_indices = self.full_to_swa_index_mapping[free_index]
         swa_indices = swa_indices[swa_indices > 0]
         self.swa_attn_allocator.free(swa_indices)
@@ -302,6 +317,7 @@ def alloc_extend_kernel(
     page_size: tl.constexpr,
     max_num_extend_tokens: tl.constexpr,
 ):
+    # 三段式填充：先补齐旧页剩余空间，再写入新整页，最后写入尾部零散 token
     pid = tl.program_id(0)
 
     load_offset = tl.arange(0, bs_upper)
@@ -388,6 +404,7 @@ def alloc_decode_kernel(
     bs_upper: tl.constexpr,
     page_size: tl.constexpr,
 ):
+    # decode 仅追加 1 token，判断是否跨页并分配新页首地址
     pid = tl.program_id(0)
 
     load_offset = tl.arange(0, bs_upper)

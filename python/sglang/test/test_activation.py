@@ -9,7 +9,6 @@ from sglang.test.test_utils import CustomTestCase
 
 _is_hip = is_hip()
 
-
 class TestGeluAndMul(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16]
     NUM_TOKENS = [7, 83, 2048]
@@ -53,7 +52,6 @@ class TestGeluAndMul(CustomTestCase):
                 seed=params[3],
             ):
                 self._run_gelu_and_mul_test(*params)
-
 
 class TestQuickGELU(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16]
@@ -99,7 +97,6 @@ class TestQuickGELU(CustomTestCase):
                 seed=params[3],
             ):
                 self._run_gelu_quick_test(*params)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

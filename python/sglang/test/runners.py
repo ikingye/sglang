@@ -65,7 +65,6 @@ DEFAULT_PROMPTS.append(long_prompt)
 
 NUM_TOP_LOGPROBS = 5
 
-
 def get_dtype_str(torch_dtype):
     if torch_dtype is torch.float16:
         return "float16"
@@ -74,20 +73,17 @@ def get_dtype_str(torch_dtype):
     else:
         raise NotImplementedError()
 
-
 def get_top_logprobs(logits, k):
     logprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
     del logits
     logprobs, top_indices = torch.topk(logprobs, k=k, dim=-1)
     return logprobs
 
-
 def get_token_ids_logprobs(logits, token_ids):
     logprobs = F.log_softmax(logits, dim=-1, dtype=torch.float32)
     del logits
     logprobs = logprobs[..., token_ids]
     return logprobs
-
 
 def _get_sentence_transformer_embedding_model(model_path, torch_dtype):
     from sentence_transformers import SentenceTransformer
@@ -110,7 +106,6 @@ def _get_sentence_transformer_embedding_model(model_path, torch_dtype):
 
     return model.cuda()
 
-
 @dataclass
 class ModelOutput:
     output_strs: List[str] = None
@@ -124,7 +119,6 @@ class ModelOutput:
     output_token_logprobs_lst: List[List[Tuple[float, int, None]]] = None
     token_ids_input_logprobs: List[torch.Tensor] = None
     token_ids_output_logprobs: List[torch.Tensor] = None
-
 
 class HFRunner:
     def __init__(
@@ -168,7 +162,6 @@ class HFRunner:
     def _get_gme_qwen2_vl_embeddings(
         self, prompts, image_data: Optional[List[str]] = None
     ):
-
         images = None
         if image_data is not None:
             images = [load_image(image)[0] for image in image_data]
@@ -477,7 +470,6 @@ class HFRunner:
             token_ids_input_logprobs=token_ids_input_logprobs,
             token_ids_output_logprobs=token_ids_output_logprobs,
         )
-
 
 class SRTRunner:
     def __init__(
@@ -802,7 +794,6 @@ class SRTRunner:
             output_strs=output_strs,
         )
 
-
 def monkey_patch_gemma2_sdpa():
     """
     Use sdpa by default to fix the OOM issue.
@@ -816,7 +807,6 @@ def monkey_patch_gemma2_sdpa():
         return config
 
     setattr(Gemma2PreTrainedModel, "_check_and_enable_sdpa", _check_and_enable_sdpa)
-
 
 def check_close_model_outputs(
     hf_outputs: ModelOutput,

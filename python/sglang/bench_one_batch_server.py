@@ -29,7 +29,6 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils import kill_process_tree
 from sglang.test.test_utils import is_in_ci, write_github_step_summary
 
-
 @dataclasses.dataclass
 class BenchArgs:
     run_name: str = "default"
@@ -88,7 +87,6 @@ class BenchArgs:
             **{attr: attr_type(getattr(args, attr)) for attr, attr_type in attrs}
         )
 
-
 def launch_server_internal(server_args):
     try:
         launch_server(server_args)
@@ -96,7 +94,6 @@ def launch_server_internal(server_args):
         raise e
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
-
 
 def launch_server_process(server_args: ServerArgs):
     proc = multiprocessing.Process(target=launch_server_internal, args=(server_args,))
@@ -117,7 +114,6 @@ def launch_server_process(server_args: ServerArgs):
             pass
         time.sleep(10)
     raise TimeoutError("Server failed to start within the timeout period.")
-
 
 def run_one_case(
     url: str,
@@ -245,7 +241,6 @@ def run_one_case(
         acc_length,
         profile_link if profile else None,
     )
-
 
 def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
     if bench_args.base_url:
@@ -386,7 +381,6 @@ def run_benchmark(server_args: ServerArgs, bench_args: BenchArgs):
 
     if is_in_ci():
         write_github_step_summary(summary)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

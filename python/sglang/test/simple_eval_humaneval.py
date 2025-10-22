@@ -16,7 +16,7 @@ import tqdm
 try:
     from human_eval.data import read_problems
     from human_eval.evaluation import estimate_pass_at_k
-    from human_eval.execution import check_correctness  # , unsafe_execute
+    from human_eval.execution import check_correctness
 except (ImportError, ModuleNotFoundError):
     print("\nPlease install human-eval at https://github.com/openai/human-eval.\n")
     raise
@@ -29,7 +29,6 @@ from sglang.test.simple_eval_common import (
     SamplerBase,
     SingleEvalResult,
 )
-
 
 def evaluate_functional_correctness(
     sample: Dict[str, str],
@@ -56,7 +55,6 @@ def evaluate_functional_correctness(
             results.append(result)
     passed = [int(r["passed"]) for r in results]
     return passed
-
 
 class HumanEval(Eval):
     def __init__(

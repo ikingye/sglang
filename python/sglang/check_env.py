@@ -11,10 +11,8 @@ import torch
 
 from sglang.srt.utils import is_hip
 
-
 def is_cuda_v2():
     return torch.version.cuda is not None
-
 
 # List of packages to check versions
 PACKAGE_LIST = [
@@ -50,7 +48,6 @@ PACKAGE_LIST = [
     "decord",
 ]
 
-
 def get_package_versions(packages):
     """
     Get versions of specified packages.
@@ -64,7 +61,6 @@ def get_package_versions(packages):
         except ModuleNotFoundError:
             versions[package_name] = "Module Not Found"
     return versions
-
 
 def get_cuda_info():
     """
@@ -86,7 +82,6 @@ def get_cuda_info():
             cuda_info.update(_get_cuda_version_info())
 
         return cuda_info
-
 
 def _get_gpu_info():
     """
@@ -113,7 +108,6 @@ def _get_gpu_info():
             gpu_info[f"GPU {','.join(gpu_ids)} Compute Capability"] = cap
 
     return gpu_info
-
 
 def _get_cuda_version_info():
     """
@@ -142,7 +136,6 @@ def _get_cuda_version_info():
     else:
         cuda_info = {"CUDA_HOME": ""}
         return cuda_info
-
 
 def _get_nvcc_info():
     """
@@ -187,7 +180,6 @@ def _get_nvcc_info():
     else:
         return {"NVCC": "Not Available"}
 
-
 def _get_cuda_driver_version():
     """
     Get CUDA driver version.
@@ -229,7 +221,6 @@ def _get_cuda_driver_version():
     else:
         return {"CUDA Driver Version": "Not Available"}
 
-
 def get_gpu_topology():
     """
     Get GPU topology information.
@@ -261,7 +252,6 @@ def get_gpu_topology():
     else:
         return None
 
-
 def get_hypervisor_vendor():
     try:
         output = subprocess.check_output(["lscpu"], text=True)
@@ -271,7 +261,6 @@ def get_hypervisor_vendor():
         return None
     except:
         return None
-
 
 def check_env():
     """
@@ -299,7 +288,6 @@ def check_env():
 
     for k, v in env_info.items():
         print(f"{k}: {v}")
-
 
 if __name__ == "__main__":
     check_env()

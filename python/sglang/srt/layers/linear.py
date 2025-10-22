@@ -1,4 +1,10 @@
-"""Adapted from https://github.com/vllm-project/vllm/blob/v0.6.4.post1/vllm/model_executor/layers/linear.py"""
+"""
+SGLang线性层模块
+这个模块实现了SGLang的线性层，支持各种量化方法和分布式计算。
+
+该模块从vLLM项目适配而来，提供了高效的线性层实现，
+支持多种量化方法、张量并行和内存优化。
+"""
 
 from __future__ import annotations
 
@@ -65,6 +71,20 @@ _is_npu = is_npu()
 
 
 def adjust_marlin_shard(param, shard_size, shard_offset):
+    """
+    调整Marlin量化方法的分片大小和偏移量
+
+    根据Marlin量化方法的瓦片大小调整分片参数，
+    确保分片边界与量化瓦片边界对齐。
+
+    参数:
+    param: 参数对象，可能包含marlin_tile_size属性
+    shard_size: 原始分片大小
+    shard_offset: 原始分片偏移量
+
+    返回:
+    Tuple[int, int]: 调整后的分片大小和偏移量
+    """
     marlin_tile_size = getattr(param, "marlin_tile_size", None)
     if marlin_tile_size is None:
         return shard_size, shard_offset
@@ -75,7 +95,20 @@ def adjust_marlin_shard(param, shard_size, shard_offset):
 def adjust_bitsandbytes_4bit_shard(
     param: Parameter, shard_offsets: Dict[str, Tuple[int, int]], loaded_shard_id: str
 ) -> Tuple[int, int]:
-    """Adjust the quantization offsets and sizes for BitsAndBytes sharding."""
+    """
+    调整BitsAndBytes 4位量化的分片偏移量和大小
+
+    为BitsAndBytes量化方法调整分片参数，确保量化后的
+    分片大小和偏移量正确对应原始数据的分片。
+
+    参数:
+    param: 参数对象
+    shard_offsets: 分片偏移量字典，包含总大小和各分片的偏移量
+    loaded_shard_id: 已加载的分片ID
+
+    返回:
+    Tuple[int, int]: 调整后的量化分片大小和偏移量
+    """
 
     total, _ = shard_offsets["total"]
     orig_offset, orig_size = shard_offsets[loaded_shard_id]
@@ -88,11 +121,21 @@ def adjust_bitsandbytes_4bit_shard(
 
 
 def adjust_scalar_to_fused_array(param, loaded_weight, shard_id):
-    """For fused modules (QKV and MLP) we have an array of length
-    N that holds 1 scale for each "logical" matrix. So the param
-    is an array of length N. The loaded_weight corresponds to
-    one of the shards on disk. Here, we slice the param based on
-    the shard_id for loading.
+    """
+    调整标量参数到融合数组
+
+    对于融合模块（如QKV和MLP），我们有一个长度为N的数组，
+    每个"逻辑"矩阵对应一个缩放因子。参数是长度为N的数组。
+    loaded_weight对应磁盘上的一个分片。这里，我们根据shard_id
+    对参数进行切片以进行加载。
+
+    参数:
+    param: 参数对象
+    loaded_weight: 已加载的权重
+    shard_id: 分片ID
+
+    返回:
+    调整后的参数切片
     """
     qkv_idxs = {"q": 0, "k": 1, "v": 2}
 

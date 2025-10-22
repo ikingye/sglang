@@ -644,6 +644,7 @@ class LlavaForConditionalGeneration(LlavaBaseForCausalLM):
                 return sgl_models.registry.ModelRegistry.resolve_model_cls(arch)[0]
             except Exception as e:
                 raise ValueError(
+
                     f"{auto_model_type.__name__} found a corresponding model `{arch}` for config class `{config_cls_name}`, but failed to load it from SGLang ModelRegistry. \n{e}"
                 )
         else:

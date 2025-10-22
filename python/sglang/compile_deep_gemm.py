@@ -34,7 +34,6 @@ os.environ["SGL_ENABLE_JIT_DEEPGEMM"] = "1"
 # Force enable mha chunked kv for DeepSeek V3 to avoid missing kv_b_proj DeepGEMM case
 os.environ["SGL_CHUNKED_PREFIX_CACHE_THRESHOLD"] = "0"
 
-
 @dataclasses.dataclass
 class CompileArgs:
     timeout: int = 3600
@@ -50,7 +49,6 @@ class CompileArgs:
         return cls(
             **{attr: attr_type(getattr(args, attr)) for attr, attr_type in attrs}
         )
-
 
 @warmup("compile-deep-gemm")
 async def warm_up_compile(
@@ -71,7 +69,6 @@ async def warm_up_compile(
 
     await tokenizer_manager.generate_request(generate_req_input, None).__anext__()
 
-
 def launch_server_internal(server_args):
     try:
         launch_server(server_args)
@@ -79,7 +76,6 @@ def launch_server_internal(server_args):
         raise e
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
-
 
 def launch_server_process_and_send_one_request(
     server_args: ServerArgs, compile_args: CompileArgs
@@ -134,7 +130,6 @@ def launch_server_process_and_send_one_request(
         "\n\nFeel free and please restart the command."
     )
 
-
 def refine_server_args(server_args: ServerArgs, compile_args: CompileArgs):
     # Disable cuda graph and torch compile to save time
     server_args.disable_cuda_graph = True
@@ -144,7 +139,6 @@ def refine_server_args(server_args: ServerArgs, compile_args: CompileArgs):
     # Set watchdog timeout to compile_args.timeout because compilation will take a long time
     server_args.watchdog_timeout = compile_args.timeout
     server_args.warmups = "compile-deep-gemm"
-
 
 def run_compile(server_args: ServerArgs, compile_args: CompileArgs):
     print(
@@ -169,7 +163,6 @@ def run_compile(server_args: ServerArgs, compile_args: CompileArgs):
             kill_process_tree(proc.pid)
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

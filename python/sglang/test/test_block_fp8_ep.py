@@ -15,7 +15,6 @@ from sglang.srt.layers.moe.ep_moe.kernels import (
 from sglang.srt.layers.moe.topk import select_experts
 from sglang.test.test_utils import CustomTestCase
 
-
 # For test
 def ep_moe(
     hidden_states: torch.Tensor,
@@ -187,7 +186,6 @@ def ep_moe(
     )
     return output
 
-
 # test util
 def block_dequant(
     x_q_block: torch.Tensor,
@@ -233,7 +231,6 @@ def block_dequant(
             x_dq_block_tiles[j][i][:, :] = x_dq_block_tiles[j][i] * x_s[j][i]
 
     return x_dq_block
-
 
 class TestW8A8BlockFP8EPMoE(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16]
@@ -358,7 +355,6 @@ class TestW8A8BlockFP8EPMoE(CustomTestCase):
             ):
                 self._w8a8_block_fp8_ep_moe(*params)
             torch.cuda.empty_cache()
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

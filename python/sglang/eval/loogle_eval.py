@@ -11,16 +11,13 @@ from bert_score import BERTScorer
 from datasets import load_dataset
 from tqdm import tqdm
 
-
 def get_client(api_url: str) -> openai.AsyncOpenAI:
     if os.getenv("OPENAI_API_KEY") is None:
         os.environ["OPENAI_API_KEY"] = "EMPTY"
     return openai.AsyncOpenAI(base_url=api_url)
 
-
 def get_dataset():
     return load_dataset("bigai-nlco/LooGLE", "longdep_qa", split="test")
-
 
 async def fetch_response(
     client: openai.AsyncOpenAI,
@@ -62,7 +59,6 @@ async def fetch_response(
     with open(output_file, "wb") as f:
         pickle.dump(response, f)
 
-
 async def benchmark(args):
     dataset = get_dataset()
     output_dir = Path(args.output_dir)
@@ -93,7 +89,6 @@ async def benchmark(args):
         asyncio.as_completed(tasks), total=len(tasks), desc="Running benchmark"
     ):
         await _
-
 
 def analyse(args):
     dataset = get_dataset()
@@ -132,7 +127,6 @@ def analyse(args):
 
     avg = sum(all_f1) / len(all_f1)
     print(f"Average BERTScore (F1): {avg:.2%}")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(

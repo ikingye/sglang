@@ -6,7 +6,6 @@ import torch
 from sglang.srt.layers.layernorm import GemmaRMSNorm, RMSNorm
 from sglang.test.test_utils import CustomTestCase
 
-
 class TestRMSNorm(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16]
     NUM_TOKENS = [7, 83, 4096]
@@ -55,7 +54,6 @@ class TestRMSNorm(CustomTestCase):
                 seed=params[4],
             ):
                 self._run_rms_norm_test(*params)
-
 
 class TestGemmaRMSNorm(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16]
@@ -107,7 +105,6 @@ class TestGemmaRMSNorm(CustomTestCase):
                 seed=params[4],
             ):
                 self._run_gemma_rms_norm_test(*params)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

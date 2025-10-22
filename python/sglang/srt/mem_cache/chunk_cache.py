@@ -39,15 +39,18 @@ class ChunkCache(BasePrefixCache):
         )
 
     def cache_finished_req(self, req: Req):
+        # 请求完成后，释放其在 ReqToTokenPool 与 KV 分配器上的占位
         kv_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx,
             # For decode server: if req.output_ids is empty, we want to free all req.origin_input_ids
             : len(req.origin_input_ids) + max(len(req.output_ids) - 1, 0),
         ]
+        # 释放请求槽位与对应的 KV 页，避免 chunk 模式下遗留占用限制后续批次
         self.req_to_token_pool.free(req.req_pool_idx)
         self.token_to_kv_pool_allocator.free(kv_indices)
 
     def cache_unfinished_req(self, req: Req):
+        # 未完成请求保留当前 KV 索引，供下一轮 chunk 继续追加
         kv_indices = self.req_to_token_pool.req_to_token[
             req.req_pool_idx, : len(req.fill_ids)
         ]
@@ -86,6 +89,7 @@ class SWAChunkCache(ChunkCache):
         prelen: int,
         attention_chunk_size: int,
     ):
+        # SWA 模式下按 chunk 大小释放旧分片，避免过早挤占 SWA KV 空间
         if prelen >= req.evicted_seqlen_local + attention_chunk_size:
             new_evicted_seqlen_local = attention_chunk_size * (
                 prelen // attention_chunk_size

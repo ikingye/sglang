@@ -1,4 +1,13 @@
-"""The interpreter that executes SGL programs"""
+"""
+SGLang程序解释器模块
+这个模块实现了SGLang程序的解释执行功能，包括：
+- 单程序执行
+- 批量程序执行
+- 流式执行
+- 异步执行
+
+解释器负责将SGLang的中间表示转换为实际的模型推理调用。
+"""
 
 import asyncio
 import contextvars
@@ -38,8 +47,19 @@ from sglang.utils import (
     get_exception_traceback,
 )
 
-
 def run_internal(state, program, func_args, func_kwargs, sync):
+    """
+    内部程序执行函数
+
+    这个函数负责实际执行SGLang程序，包括异常处理和资源清理。
+
+    参数:
+    state: 程序状态对象
+    program: 要执行的程序
+    func_args: 函数位置参数
+    func_kwargs: 函数关键字参数
+    sync: 是否同步执行
+    """
     try:
         state.ret_value = program.func(state, *func_args, **func_kwargs)
     except Exception as e:
@@ -53,7 +73,6 @@ def run_internal(state, program, func_args, func_kwargs, sync):
     if global_config.verbosity >= 2:
         print(state.text())
 
-
 def run_program(
     program,
     backend,
@@ -64,10 +83,32 @@ def run_program(
     sync=False,
     use_thread=True,
 ):
+    """
+    运行单个SGLang程序
+
+    这个函数负责设置执行环境并运行程序，支持同步和异步执行。
+
+    参数:
+    program: 要执行的程序
+    backend: 后端执行器
+    func_args: 函数位置参数
+    func_kwargs: 函数关键字参数
+    default_sampling_para: 默认采样参数
+    stream: 是否流式执行
+    sync: 是否同步执行
+    use_thread: 是否使用线程
+
+    返回:
+    ProgramState: 程序执行状态
+    """
+
     if hasattr(backend, "endpoint"):
         backend = backend.endpoint
+
     assert backend is not None, "Please specify a backend"
+
     func_kwargs.update(program.bind_arguments)
+
     stream_executor = StreamExecutor(
         backend,
         func_kwargs,
@@ -77,6 +118,7 @@ def run_program(
         num_api_spec_tokens=program.num_api_spec_tokens,
         use_thread=use_thread,
     )
+
     state = ProgramState(stream_executor)
 
     if stream:
@@ -89,7 +131,6 @@ def run_program(
         run_internal(state, program, func_args, func_kwargs, sync)
         return state
 
-
 def run_program_batch(
     program,
     backend,
@@ -99,6 +140,12 @@ def run_program_batch(
     progress_bar,
     generator_style=False,
 ):
+    """批量执行 SGLang 程序，兼顾吞吐与资源占用的调度策略。
+
+    该函数在真正派发任务前会尝试复用公共前缀，并根据输入规模动态调整
+    线程池并发度。当 `generator_style=True` 时，以增量生成器方式返回结果，
+    避免一次性提交过多任务造成阻塞。
+    """
     if hasattr(backend, "endpoint"):
         backend = backend.endpoint
 
@@ -109,6 +156,7 @@ def run_program_batch(
     # Run all programs
     if num_threads == "auto":
         num_threads = max(96, multiprocessing.cpu_count() * 16)
+
     num_threads = min(num_threads, len(batch_arguments))
 
     if generator_style:
@@ -180,7 +228,6 @@ def run_program_batch(
 
     return rets
 
-
 def _run_program_batch_generator(
     program,
     backend,
@@ -189,7 +236,12 @@ def _run_program_batch_generator(
     num_threads,
     progress_bar,
 ):
-    """Helper function that yields results one by one using chunking to avoid overwhelming ThreadPoolExecutor."""
+    """分块产生批量推理结果，降低线程池背压风险的辅助函数。
+
+    当调用方希望逐条消费结果时，直接在常规线程池上 `submit` 所有任务会导致
+    内部队列被快速填满、阻塞当前线程。该生成器通过按块提交任务并在块级别
+    逐个 `yield`，既保留并发优势，又能保持响应式输出。
+    """
     if num_threads == 1:
         iterator = tqdm.tqdm(batch_arguments) if progress_bar else batch_arguments
         for arguments in iterator:
@@ -238,17 +290,21 @@ def _run_program_batch_generator(
         if pbar:
             pbar.close()
 
-
 def cache_program(program, backend):
+    """通过 trace 提取公共前缀并请求后端缓存，加速后续批量推理。"""
     from sglang.lang.tracer import extract_prefix_by_tracing
 
     prefix = extract_prefix_by_tracing(program, backend)
     if prefix and len(prefix) > 64:
         backend.cache_prefix(prefix)
 
-
 class StreamExecutor:
-    """A stream executor that executes SGL expressions in a background thread."""
+    """流式执行器：在后台线程中逐条消费 SGL 表达式并驱动模型推理。
+
+    每个 `ProgramState` 持有一个执行器实例，它负责管理变量事件、聊天模板、
+    图像/视频附件等上下文信息。根据 `stream`、`use_thread` 等配置，执行器可
+    以选择同步或异步模式执行，并在必要时暴露流式增量输出。
+    """
 
     def __init__(
         self,
@@ -260,6 +316,17 @@ class StreamExecutor:
         num_api_spec_tokens=None,
         use_thread=True,
     ):
+        """初始化执行器，绑定后端接口与运行时上下文。
+
+        参数解释：
+        - ``backend``: 具体的推理后端，实现 generate/select 等接口。
+        - ``arguments``: 运行程序时的关键字参数，用于补全变量和调用后端。
+        - ``default_sampling_para``: 运行时的默认采样策略，可被节点覆盖。
+        - ``chat_template``: 格式化多轮对话所需的模板，若不传则后端给出默认值。
+        - ``stream``: 是否启用流式模式；开启后暴露事件驱动的增量输出。
+        - ``num_api_spec_tokens``: API 级推测执行的配额，若存在则启用 speculative 路径。
+        - ``use_thread``: 是否在后台线程中执行表达式，关闭后 `submit` 将同步执行。
+        """
         from sglang.lang.backend.base_backend import BaseBackend
 
         self.sid = uuid.uuid4().hex
@@ -306,6 +373,9 @@ class StreamExecutor:
                 target=contextvars.copy_context().run, args=(_run_worker_in_context,)
             )
             self.worker.start()
+        else:
+            self.queue = None
+            self.worker = None
 
         # For streaming
         if stream:
@@ -316,6 +386,7 @@ class StreamExecutor:
             self.stream_var_event = None
 
     def submit(self, expr: SglExpr):
+        """将表达式推入执行队列，确保变量事件提前注册。"""
         self._init_var_event(expr)
 
         if self.use_thread:
@@ -324,18 +395,22 @@ class StreamExecutor:
             self._execute(expr)
 
     def sync(self):
+        """等待后台线程消费完队列，保障状态一致。"""
         if self.use_thread:
             self.queue.join()
 
     def get_var(self, name):
+        """阻塞等待变量就绪后返回其值。"""
         if name in self.variable_event:
             self.variable_event[name].wait()
         return self.variables[name]
 
     def set_var(self, name, value):
+        """直接覆盖变量值，不触发事件；仅用于推理内部更新。"""
         self.variables[name] = value
 
     def get_meta_info(self, name, timeout=None):
+        """获取变量关联的元数据，可设定等待超时。"""
         if name in self.variable_event:
             got = self.variable_event[name].wait(timeout)
             if not got:
@@ -348,6 +423,7 @@ class StreamExecutor:
         size: int = 1,
         position_ids_offset: Optional[List[int]] = None,
     ):
+        """复制当前执行上下文，返回多个独立的分支执行器。"""
         if size > 1 and str(self.text_):
             self.submit(SglCommitLazy())
 
@@ -396,6 +472,7 @@ class StreamExecutor:
         self.backend.end_program(self)
 
     def _thread_worker_func(self):
+        """后台线程主循环，串行消费队列并处理异常回收。"""
         error = None
 
         while True:
@@ -435,6 +512,7 @@ class StreamExecutor:
         self.is_finished = True
 
     def _execute(self, other):
+        """分派执行不同类型的 SGL 表达式。"""
         if isinstance(other, str):
             other = SglConstantText(other)
 
@@ -479,6 +557,7 @@ class StreamExecutor:
             raise ValueError(f"Unknown type: {type(other)}")
 
     def _execute_fill(self, value: str, prefix=False):
+        """直接填充文本到缓冲区，兼顾推测执行与角色上下文。"""
         value = str(value)
 
         if (
@@ -498,6 +577,7 @@ class StreamExecutor:
         self.text_ += value
 
     def _execute_image(self, expr: SglImage):
+        """读取图像文件并转成 chat 模板要求的嵌入格式。"""
         path = expr.path
 
         base64_data = encode_image_base64(path)
@@ -507,6 +587,7 @@ class StreamExecutor:
         self.text_ += self.chat_template.image_token
 
     def _execute_video(self, expr: SglVideo):
+        """按帧数抽样视频并编码，复用图像占位符传递给后端。"""
         path = expr.path
         num_frames = expr.num_frames
 
@@ -517,6 +598,7 @@ class StreamExecutor:
         self.text_ += self.chat_template.image_token
 
     def _spec_gen(self, sampling_params):
+        """在 completion 接口上执行 API 级推测生成。"""
         stop = sampling_params.stop
         max_new_tokens = sampling_params.max_new_tokens
         meta_info = {}
@@ -528,6 +610,7 @@ class StreamExecutor:
                 sampling_params.max_new_tokens, self.num_api_spec_tokens
             )
             sampling_params.stop = None
+
             self.speculated_text, meta_info = self.backend.generate(
                 self, sampling_params=sampling_params
             )
@@ -567,6 +650,7 @@ class StreamExecutor:
         return comp, meta_info
 
     def _execute_gen(self, expr: SglGen):
+        """处理 `sgl.gen` 节点，统一封装流式/非流式与推测执行路径。"""
         sampling_params = self._resolve_sampling_params(expr.sampling_params)
         name = expr.name
         if not self.stream:
@@ -588,7 +672,7 @@ class StreamExecutor:
                     )
                     return
 
-                else:  # Speculative execution on models with completion interface
+                else:
                     comp, meta_info = self._spec_gen(sampling_params)
             if isinstance(comp, list):
                 self.text_ += comp[0]
@@ -621,6 +705,7 @@ class StreamExecutor:
             self.stream_var_event[name].set()
 
     def _execute_select(self, expr: SglSelect):
+        """调用后端进行离散选项采样，并同步变量状态。"""
         choices_decision = self.backend.select(
             self, expr.choices, expr.temperature, expr.choices_method
         )
@@ -634,11 +719,13 @@ class StreamExecutor:
         self.text_ += choices_decision.decision
 
     def _execute_variable(self, expr: SglVariable):
+        """从源执行器读取变量值并填入当前上下文。"""
         src_executor = expr.source_stream_executor
         value = src_executor.get_var(expr.name)
         self._execute_fill(value)
 
     def _execute_role_begin(self, expr: SglRoleBegin):
+        """插入角色前缀，必要时补齐默认 system 消息。"""
         assert self.cur_role is None, "Nested roles are not allowed."
 
         if len(self.messages_) == 0 and expr.role != "system":
@@ -657,6 +744,7 @@ class StreamExecutor:
         self.cur_role_begin_pos = len(self.text_)
 
     def _execute_role_end(self, expr: SglRoleEnd):
+        """完成角色片段收尾，写入后缀并构造聊天消息对象。"""
         if (
             self.cur_role == "assistant"
             and self.num_api_spec_tokens is not None
@@ -693,16 +781,20 @@ class StreamExecutor:
             self.messages_.append({"role": expr.role, "content": new_text})
 
     def _execute_var_scope_begin(self, expr: SglVarScopeBegin):
+        """记录变量作用域起点，用于截取后续生成的文本。"""
         self.variables[expr.name] = int(len(self.text_))
 
     def _execute_var_scope_end(self, expr: SglVarScopeEnd):
+        """根据起点截断文本并标记变量可用。"""
         self.variables[expr.name] = self.text_[self.variables[expr.name] :]
         self.variable_event[expr.name].set()
 
     def _execute_commit_lazy_operations(self, expr: SglCommitLazy):
+        """将延迟的后端操作立即提交，防止跨分支残留。"""
         self.backend.commit_lazy_operations(self)
 
     def _execute_concatenate_and_append_text(self, expr: SglConcateAndAppend):
+        """串接各分支的新增文本，作为纯文本回填策略。"""
         new_text = ""
         for s in expr.states:
             exe = s.stream_executor
@@ -712,6 +804,7 @@ class StreamExecutor:
         self._execute_fill(new_text)
 
     def _execute_concatenate_and_append_kv_cache(self, expr: SglConcateAndAppend):
+        """利用 KV 缓存拼接多个分支，减少重复前向计算。"""
         self_len = len(self.text_)
 
         for i, s in enumerate(expr.states):
@@ -728,6 +821,7 @@ class StreamExecutor:
         self.backend.concatenate_and_append(src_rids, self.sid)
 
     def _execute_separate_reasoning(self, expr: SglSeparateReasoning):
+        """解析模型返回的“思维链”文本，并拆分推理/最终答案。"""
         if self.stream:
             # separate reasoning for stream is not supported
             return
@@ -762,6 +856,7 @@ class StreamExecutor:
                 )
 
     def _init_var_event(self, expr):
+        """根据表达式类型预注册事件，保证异步场景下不会漏唤醒。"""
         if isinstance(
             expr, (SglGen, SglSelect, SglVarScopeBegin, SglSeparateReasoning)
         ):
@@ -773,17 +868,8 @@ class StreamExecutor:
                 self._init_var_event(e)
 
     def _resolve_sampling_params(self, sampling_params):
-        """
-        Construct sampling param based on default + override values
+        """合并默认与局部采样参数，并根据聊天模板追加停止词。"""
 
-        The default values of sampling are populated in `default_sampling_para` via sgl.function.run(...sampling_args)
-        , and `sampling_params` contains the override values from sgl.gen().
-
-        Here we use default_sampling_para as the base and override the values if they exist in `sampling_params`.
-        It also extends the stop tokens based on the chat template.
-        """
-
-        # deepcopy is required because the dict has lists inside
         clone = copy.deepcopy(self.default_sampling_para)
 
         for item in [
@@ -823,20 +909,20 @@ class StreamExecutor:
     def __del__(self):
         self.end()
 
-
 class ProgramState:
-    """The state of an SGL program."""
+    """封装单个 SGL 程序的运行时状态，提供语法糖接口。"""
 
     def __init__(self, stream_executor: StreamExecutor):
+        """保存底层执行器引用，供语义化 API 转发调用。"""
         self.stream_executor = stream_executor
 
     def _role_common(self, name: str, expr: Optional[SglExpr] = None):
+        """统一处理 system/user/assistant 角色的嵌套表达。"""
         if expr is not None:
             role_expr = SglExprList([SglRoleBegin(name), expr, SglRoleEnd(name)])
             self.stream_executor.submit(role_expr)
             return role_expr
         else:
-
             @contextmanager
             def role_scope():
                 self.stream_executor.submit(SglRoleBegin(name))
@@ -856,6 +942,7 @@ class ProgramState:
 
     @contextmanager
     def var_scope(self, name: str):
+        """上下文管理器：捕获调用期间生成的文本片段。"""
         self.stream_executor.submit(SglVarScopeBegin(name))
         yield
         self.stream_executor.submit(SglVarScopeEnd(name))
@@ -865,6 +952,7 @@ class ProgramState:
         size: int = 1,
         position_ids_offset: Optional[List[int]] = None,
     ):
+        """暴露到状态层的 fork，返回 ProgramStateGroup 方便批量操作。"""
         stream_executors = self.stream_executor.fork(size, position_ids_offset)
         states = [ProgramState(x) for x in stream_executors]
         state_group = ProgramStateGroup(states, self)
@@ -872,6 +960,7 @@ class ProgramState:
 
     @contextmanager
     def copy(self, position_ids_offset: Optional[List[int]] = None):
+        """创建单分支副本并在退出时自动回收。"""
         state_group = self.fork(1, position_ids_offset)
         try:
             yield state_group[0]
@@ -879,18 +968,23 @@ class ProgramState:
             state_group.join()
 
     def text(self):
+        """获取当前累积文本，内部会等待执行完成。"""
         return self.stream_executor.text()
 
     def messages(self):
+        """以 OpenAI 样式返回完整的多轮消息列表。"""
         return self.stream_executor.messages()
 
     def sync(self):
+        """同步等待后台任务结束，用于阻塞式推理。"""
         return self.stream_executor.sync()
 
     def error(self):
+        """返回执行期间捕获的异常对象。"""
         return self.stream_executor.error()
 
     def text_iter(self, var_name: Optional[str] = None):
+        """同步生成器：按需迭代文本或变量的增量片段。"""
         if self.stream_executor.stream:
             prev = 0
             if var_name is None:
@@ -931,6 +1025,7 @@ class ProgramState:
     async def text_async_iter(
         self, var_name: Optional[str] = None, return_meta_data: bool = False
     ):
+        """异步版本的流式迭代器，可选返回变量元数据。"""
         loop = asyncio.get_running_loop()
 
         if self.stream_executor.stream:
@@ -983,18 +1078,22 @@ class ProgramState:
         return self.stream_executor.get_meta_info(name)
 
     def __iadd__(self, other):
+        """向状态中追加表达式或字符串，语法糖对应 `submit`。"""
         if other is None:
             raise ValueError("Tried to append None to state.")
         self.stream_executor.submit(other)
         return self
 
     def __getitem__(self, name):
+        """字典语法获取变量，等价于 `get_var`。"""
         return self.get_var(name)
 
     def __setitem__(self, name, value):
+        """字典语法设置变量。"""
         self.set_var(name, value)
 
     def __contains__(self, name):
+        """判断变量是否已经定义。"""
         return name in self.stream_executor.variables
 
     def __del__(self):
@@ -1003,15 +1102,17 @@ class ProgramState:
     def __repr__(self) -> str:
         return f"ProgramState({self.text()})"
 
-
 class ProgramStateGroup:
+    """封装一组分叉出来的 ProgramState，提供批量操作接口。"""
     def __init__(
         self, states: List[ProgramState], src_state: Optional[ProgramState] = None
     ):
+        """持有所有子状态，同时记录原始父状态以便回收变量。"""
         self.states = states
         self.src_state = src_state
 
     def join(self, mode: str = "gather_variable"):
+        """合并子状态：支持变量汇聚或 KV 缓存拼接两种模式。"""
         if mode == "gather_variable":
             # Copy variables back
             src_vars = self.src_state.stream_executor.variables

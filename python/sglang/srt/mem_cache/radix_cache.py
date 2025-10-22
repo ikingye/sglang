@@ -152,7 +152,7 @@ class RadixCache(BasePrefixCache):
         self.root_node = TreeNode()
         self.root_node.key = []
         self.root_node.value = []
-        self.root_node.lock_ref = 1
+        self.root_node.lock_ref = 1  # 根节点常驻，防止被误驱逐
         self.evictable_size_ = 0
         self.protected_size_ = 0
         self._record_all_cleared_event()

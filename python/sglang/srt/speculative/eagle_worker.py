@@ -61,6 +61,7 @@ logger = logging.getLogger(__name__)
 def draft_tp_context(tp_group: GroupCoordinator):
     # Draft model doesn't use dp and has its own tp group.
     # We disable mscclpp now because it doesn't support 2 comm groups.
+    # 临时切换到草稿模型专用的张量并行组，避免与主模型的通信配置互相干扰
     with patch_tensor_parallel_group(tp_group):
         yield
 
@@ -104,6 +105,7 @@ class EAGLEWorker(TpModelWorker):
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             target_worker.get_memory_pool()
         )
+        # 草稿/目标共享同一对池化器，便于在推测过程中同步 KV 视图
 
         # Load hot token ids
         if self.speculative_algorithm.is_eagle3():
@@ -143,12 +145,13 @@ class EAGLEWorker(TpModelWorker):
 
             # grab hot token ids
             if self.draft_model_runner.model.hot_token_id is not None:
-                self.hot_token_id = self.draft_model_runner.model.hot_token_id.to(
-                    embed.device
-                )
+            self.hot_token_id = self.draft_model_runner.model.hot_token_id.to(
+                embed.device
+            )
 
         else:
             if self.hot_token_id is not None:
+                # 克隆一份 lm_head 并筛掉热点 token 以外的行，草稿模型专注于高频词预测
                 head = head.clone()
                 self.hot_token_id = self.hot_token_id.to(head.device)
                 head.data = head.data[self.hot_token_id]
@@ -306,6 +309,7 @@ class EAGLEWorker(TpModelWorker):
             )
             after_mem = get_available_gpu_memory(self.device, self.gpu_id)
             logger.info(
+
                 f"Capture draft extend cuda graph end. Time elapsed: {time.perf_counter() - tic:.2f} s. mem usage={(before_mem - after_mem):.2f} GB. avail mem={after_mem:.2f} GB."
             )
 
@@ -327,6 +331,7 @@ class EAGLEWorker(TpModelWorker):
             A tuple of the final logit output of the target model, next tokens accepted,
             the batch id (used for overlap schedule), and number of accepted tokens.
         """
+        # 先根据 forward_mode 判断是否进入 extend，若需 decode 则先草稿后验证再回填
         if batch.forward_mode.is_extend() or batch.is_extend_in_batch:
             logits_output, next_token_ids, bid, seq_lens_cpu = (
                 self.forward_target_extend(batch)
@@ -394,6 +399,7 @@ class EAGLEWorker(TpModelWorker):
         """
         # Forward with the target model and get hidden states.
         # We need the full hidden states to prefill the KV cache of the draft model.
+        # 目标模型前向时强制捕获 FULL hidden state，稍后将这些值拷给草稿模型继续扩展
         model_worker_batch = batch.get_model_worker_batch()
         model_worker_batch.capture_hidden_mode = CaptureHiddenMode.FULL
         logits_output, next_token_ids, _ = self.target_worker.forward_batch_generation(

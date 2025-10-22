@@ -9,7 +9,6 @@ import numpy as np
 import sglang as sgl
 from sglang.utils import download_and_cache_file, read_jsonl
 
-
 def test_few_shot_qa():
     @sgl.function
     def few_shot_qa(s, question):
@@ -37,7 +36,6 @@ def test_few_shot_qa():
     answers = [x["answer"].strip().lower() for x in rets]
     assert answers == ["tokyo", "london", "beijing"], f"answers: {answers}"
 
-
 def test_mt_bench():
     @sgl.function
     def answer_mt_bench(s, question_1, question_2):
@@ -57,7 +55,6 @@ def test_mt_bench():
         question_1=question_1, question_2=question_2, temperature=0.7, max_new_tokens=64
     )
     assert len(ret.messages()) in [4, 5]
-
 
 def test_select(check_answer):
     @sgl.function
@@ -92,7 +89,6 @@ def test_select(check_answer):
     else:
         assert ret["answer"] in ["True", "False", "Unknown"]
 
-
 def test_decode_int():
     @sgl.function
     def decode_int(s):
@@ -102,7 +98,6 @@ def test_decode_int():
     ret = decode_int.run(temperature=0.1)
     assert int(ret["hours"]) == 24, ret.text()
     assert int(ret["days"]) == 365, ret.text()
-
 
 def test_decode_json_regex():
     @sgl.function
@@ -131,7 +126,6 @@ def test_decode_json_regex():
     assert isinstance(js_obj["name"], str)
     assert isinstance(js_obj["population"], int)
 
-
 def test_decode_json():
     @sgl.function
     def decode_json(s):
@@ -155,7 +149,6 @@ def test_decode_json():
     assert isinstance(js_obj["name"], str)
     assert isinstance(js_obj["population"], int)
 
-
 def test_expert_answer(check_answer=True):
     @sgl.function
     def expert_answer(s, question):
@@ -178,7 +171,6 @@ def test_expert_answer(check_answer=True):
     if check_answer:
         assert "paris" in ret.text().lower(), f"Answer: {ret.text()}"
 
-
 def test_tool_use():
     def calculate(expression):
         return f"{eval(expression)}"
@@ -199,7 +191,6 @@ def test_tool_use():
     lhs, rhs = 257, 983
     ret = tool_use(lhs=lhs, rhs=rhs, temperature=0)
     assert int(ret["answer"]) == lhs * rhs
-
 
 def test_react():
     @sgl.function
@@ -235,7 +226,6 @@ Action 3: Finish [United States].\n
     )
     answer = ret["answer"].lower()
     assert "finland" in answer or "states" in answer
-
 
 def test_parallel_decoding():
     max_tokens = 64
@@ -274,7 +264,6 @@ def test_parallel_decoding():
     ret = parallel_decoding.run(topic="writing a good blog post", temperature=0.3)
     assert isinstance(ret["summary"], str)
 
-
 def test_parallel_encoding(check_answer=True):
     max_tokens = 64
 
@@ -306,7 +295,6 @@ def test_parallel_encoding(check_answer=True):
     if check_answer:
         assert "Noah" in answer
 
-
 def test_image_qa():
     @sgl.function
     def image_qa(s, question):
@@ -323,7 +311,6 @@ def test_image_qa():
         "taxi" in state.messages()[-1]["content"]
         or "car" in state.messages()[-1]["content"]
     ), f"{state.messages()[-1]['content']}"
-
 
 def test_stream():
     @sgl.function
@@ -348,7 +335,6 @@ def test_stream():
     for chunk in ret.text_iter("answer"):
         out += chunk
 
-
 def test_regex():
     regex = r"((25[0-5]|2[0-4]\d|[01]?\d\d?).){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)"
 
@@ -364,7 +350,6 @@ def test_regex():
     state = regex_gen.run()
     answer = state["answer"]
     assert re.match(regex, answer)
-
 
 def test_dtype_gen():
     @sgl.function
@@ -388,7 +373,6 @@ def test_dtype_gen():
     except ValueError:
         print(state)
         raise
-
 
 def test_completion_speculative():
     @sgl.function(num_api_spec_tokens=64)
@@ -431,7 +415,6 @@ def test_completion_speculative():
         usage_with_spec < usage_with_no_spec
     ), f"{usage_with_spec} vs {usage_with_no_spec}"
 
-
 def test_chat_completion_speculative():
     @sgl.function(num_api_spec_tokens=256)
     def gen_character_spec(s):
@@ -451,7 +434,6 @@ def test_chat_completion_speculative():
         )
 
     gen_character_spec().sync()
-
 
 def test_hellaswag_select():
     """Benchmark the accuracy of sgl.select on the HellaSwag dataset."""
@@ -540,7 +522,6 @@ def test_hellaswag_select():
     assert np.abs(latency_gen - latency) < 1
 
     return accuracy, latency
-
 
 def test_gen_min_new_tokens():
     """

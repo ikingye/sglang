@@ -24,7 +24,6 @@ from sglang.test.simple_eval_common import (
     format_multichoice_question,
 )
 
-
 class GPQAEval(Eval):
     def __init__(
         self,

@@ -11,10 +11,8 @@ _is_hip = is_hip()
 _is_fp8_fnuz = is_fp8_fnuz()
 fp8_dtype = torch.float8_e4m3fnuz if _is_fp8_fnuz else torch.float8_e4m3fn
 
-
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 def test_scaled_fp8_quant_per_tensor(dtype) -> None:
-
     def quantize_ref_per_tensor(tensor, inv_scale):
         # The reference implementation that fully aligns to
         # the kernel being tested.
@@ -52,9 +50,7 @@ def test_scaled_fp8_quant_per_tensor(dtype) -> None:
         dequantize_per_tensor(ref_y, scale, dtype),
     )
 
-
 if _is_cuda or _is_hip:
-
     @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
     def test_scaled_fp8_quant_per_token_dynamic(dtype) -> None:
         def quantize_ref_per_token(tensor, inv_scale):
@@ -141,7 +137,6 @@ if _is_cuda or _is_hip:
         torch.testing.assert_close(
             scale_per_token[:original_rows], scale_per_token_without_padding
         )
-
 
 if __name__ == "__main__":
     # Run the specific test function directly

@@ -11,10 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""
-The entry point of inference server. (SRT = SGLang Runtime)
+"""推理服务器入口点 (SRT = SGLang Runtime)。
 
-This file implements python APIs for the inference engine.
+该模块对外提供 `Engine` 类，封装了调度器、分词器/去分词器和数据并行控制器的
+生命周期管理。主要职责包括：
+
+* 解析 `ServerArgs`，配置端口、日志、GPU 资源等运行参数；
+* 启动 TokenizerManager/Scheduler/DetokenizerManager 等子进程并建立 ZMQ 通信；
+* 提供 `generate` / `embedding` 等 API，负责请求打包、发送和结果汇聚；
+* 支持 LoRA 动态加载、权重更新、推测执行等高级特性；
+* 进程退出时自动清理子进程及相关资源。
 """
 
 import asyncio
@@ -31,7 +37,7 @@ import zmq
 import zmq.asyncio
 from PIL.Image import Image
 
-# Fix a bug of Python threading
+# Avoid double-registering atexit handlers due to CPython threading bug
 setattr(threading, "_register_atexit", lambda *args, **kwargs: None)
 
 import torch
@@ -104,7 +110,6 @@ class Engine(EngineBase):
         Please refer to `ServerArgs` for the documentation.
         """
         if "server_args" in kwargs:
-            # Directly load server_args
             server_args = kwargs["server_args"]
         else:
             # Construct server_args from kwargs
@@ -113,7 +118,7 @@ class Engine(EngineBase):
                 kwargs["log_level"] = "error"
             server_args = ServerArgs(**kwargs)
 
-        # Shutdown the subprocesses automatically when the program exits
+        # 程序退出时自动清理所有子进程，避免挂起
         atexit.register(self.shutdown)
 
         # Allocate ports for inter-process communications
@@ -121,6 +126,7 @@ class Engine(EngineBase):
         logger.info(f"{server_args=}")
 
         # Launch subprocesses
+        # tokenizer_manager 运行在主进程，调度器/去分词器分别运行在独立进程
         tokenizer_manager, template_manager, scheduler_info = _launch_subprocesses(
             server_args=server_args,
             port_args=self.port_args,
@@ -178,6 +184,7 @@ class Engine(EngineBase):
                     f"data_parallel_rank must be less than dp_size: {self.server_args.dp_size}"
                 )
 
+        # 将高层参数打包成 `GenerateReqInput`，方便调度器统一处理
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,
@@ -199,6 +206,7 @@ class Engine(EngineBase):
             data_parallel_rank=data_parallel_rank,
         )
         loop = asyncio.get_event_loop()
+        # TokenizerManager 以异步生成器形式返回结果，支持流式/阻塞两种模式
         generator = self.tokenizer_manager.generate_request(obj, None)
 
         if stream:
@@ -261,6 +269,7 @@ class Engine(EngineBase):
                 )
 
         logger.debug(f"data_parallel_rank: {data_parallel_rank}")
+        # async 版本同样将参数封装后交给 TokenizerManager；调用者自行迭代异步结果
         obj = GenerateReqInput(
             text=prompt,
             input_ids=input_ids,
@@ -306,6 +315,7 @@ class Engine(EngineBase):
             video_data=video_data,
         )
         loop = asyncio.get_event_loop()
+        # 嵌入请求复用同一异步管线，只需获取首个结果
         generator = self.tokenizer_manager.generate_request(obj, None)
         ret = loop.run_until_complete(generator.__anext__())
         return ret
@@ -348,6 +358,7 @@ class Engine(EngineBase):
 
     def shutdown(self):
         """Shutdown the engine"""
+        # engine 退出时杀掉所有子进程，避免遗留 zombie 进程
         kill_process_tree(os.getpid(), include_parent=False)
 
     def __enter__(self):
@@ -700,6 +711,7 @@ def _launch_subprocesses(
 
     scheduler_procs = []
     if server_args.dp_size == 1:
+        # 单机或无 DP 场景：直接拉起多个 scheduler 进程，每个负责一个 (pp, tp) 组合
         memory_saver_adapter = TorchMemorySaverAdapter.create(
             enable=server_args.enable_memory_saver
         )
@@ -748,6 +760,7 @@ def _launch_subprocesses(
                 scheduler_pipe_readers.append(reader)
     else:
         # Launch the data parallel controller
+        # 多机/DP 场景：调度器由 DataParallelController 再次分发
         reader, writer = mp.Pipe(duplex=False)
         scheduler_pipe_readers = [reader]
         proc = mp.Process(
@@ -791,6 +804,7 @@ def _launch_subprocesses(
     detoken_proc.start()
 
     # Launch tokenizer process
+    # TokenizerManager 留在主进程，方便 Engine 直接调用其异步接口
     tokenizer_manager = TokenizerManager(server_args, port_args)
 
     # Initialize templates

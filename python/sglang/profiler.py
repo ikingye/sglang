@@ -18,7 +18,6 @@ import requests
 
 PARENT_FOLDER = "/tmp/sglang-profile"
 
-
 def _run_profile(
     url: Optional[str],
     num_steps: int,
@@ -69,7 +68,6 @@ def _run_profile(
     trace_link = str(output_dir)
     return trace_link
 
-
 def run_profile(
     url: Optional[str],
     num_steps: int,
@@ -83,7 +81,6 @@ def run_profile(
         url, num_steps, activities, output_dir, profile_name, profile_by_stage
     )
     return link
-
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Benchmark the online serving throughput.")

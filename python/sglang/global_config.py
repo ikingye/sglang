@@ -1,26 +1,28 @@
-"""Global configurations"""
+"""全局配置模块
+这个模块定义了SGLang系统的全局配置参数，包括运行时参数、优化设置等。
+这些配置影响整个系统的行为，可以通过环境变量进行覆盖。
+"""
 
 import os
 
-
 class GlobalConfig:
     """
-    Store some global constants.
+    存储全局常量和配置参数。
 
-    See also python/sglang/srt/managers/schedule_batch.py::global_server_args_dict, which stores
-    many global runtime arguments as well.
+    这个类管理SGLang系统的全局配置，包括：
+    - 日志输出级别
+    - 默认后端设置
+    - 运行时性能参数
+    - 输出格式配置
+    - 优化开关
+
+    注意：更多运行时参数存储在 python/sglang/srt/managers/schedule_batch.py::global_server_args_dict 中
     """
 
     def __init__(self):
-        # Verbosity level
-        # 0: do not output anything
-        # 2: output final text after every run
         self.verbosity = 0
-
-        # Default backend of the language
         self.default_backend = None
 
-        # Runtime constants: New generation token ratio estimation
         self.default_init_new_token_ratio = float(
             os.environ.get("SGLANG_INIT_NEW_TOKEN_RATIO", 0.7)
         )
@@ -30,24 +32,19 @@ class GlobalConfig:
         self.default_new_token_ratio_decay_steps = float(
             os.environ.get("SGLANG_NEW_TOKEN_RATIO_DECAY_STEPS", 600)
         )
+
         self.torch_empty_cache_interval = float(
-            os.environ.get(
-                "SGLANG_EMPTY_CACHE_INTERVAL", -1
-            )  # in seconds. Set if you observe high memory accumulation over a long serving period.
+            os.environ.get("SGLANG_EMPTY_CACHE_INTERVAL", -1)
         )
-        # Runtime constants: others
         self.retract_decode_steps = 20
         self.flashinfer_workspace_size = os.environ.get(
             "FLASHINFER_WORKSPACE_SIZE", 384 * 1024 * 1024
         )
 
-        # Output tokenization configs
         self.skip_special_tokens_in_output = True
         self.spaces_between_special_tokens_in_out = True
 
-        # Language frontend interpreter optimization configs
         self.enable_precache_with_tracing = True
         self.enable_parallel_encoding = True
-
 
 global_config = GlobalConfig()

@@ -3,11 +3,9 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable, Dict, List, Tuple
 
-
 class ChatTemplateStyle(Enum):
     PLAIN = auto()
     LLAMA2 = auto()
-
 
 @dataclass
 class ChatTemplate:
@@ -53,22 +51,17 @@ class ChatTemplate:
             prompt += f"{prefix}{content}{suffix}"
         return prompt
 
-
 chat_template_registry: Dict[str, ChatTemplate] = {}
 matching_function_registry: List[Callable] = []
-
 
 def register_chat_template(template):
     chat_template_registry[template.name] = template
 
-
 def register_chat_template_matching_function(func):
     matching_function_registry.append(func)
 
-
 def get_chat_template(name):
     return chat_template_registry[name]
-
 
 def get_chat_template_by_model_path(model_path):
     for matching_func in matching_function_registry:
@@ -76,7 +69,6 @@ def get_chat_template_by_model_path(model_path):
         if template_name is not None:
             return get_chat_template(template_name)
     return get_chat_template("default")
-
 
 register_chat_template(
     ChatTemplate(
@@ -521,7 +513,6 @@ register_chat_template(
     )
 )
 
-
 @register_chat_template_matching_function
 def match_deepseek(model_path: str):
     if re.search(r"deepseek-(v3|r1)", model_path, re.IGNORECASE) and not re.search(
@@ -529,12 +520,10 @@ def match_deepseek(model_path: str):
     ):
         return "deepseek-v3"
 
-
 @register_chat_template_matching_function
 def match_deepseek_janus_pro(model_path: str):
     if re.search(r"janus", model_path, re.IGNORECASE):
         return "janus-pro"
-
 
 @register_chat_template_matching_function
 def match_dbrx(model_path: str):
@@ -543,12 +532,10 @@ def match_dbrx(model_path: str):
     ):
         return "dbrx-instruct"
 
-
 @register_chat_template_matching_function
 def match_vicuna(model_path: str):
     if re.search(r"vicuna|llava-v1\.5|llava-next-video-7b", model_path, re.IGNORECASE):
         return "vicuna_v1.1"
-
 
 @register_chat_template_matching_function
 def match_llama2_chat(model_path: str):
@@ -559,18 +546,15 @@ def match_llama2_chat(model_path: str):
     ):
         return "llama-2-chat"
 
-
 @register_chat_template_matching_function
 def match_mistral(model_path: str):
     if re.search(r"pixtral|(mistral|mixtral).*instruct", model_path, re.IGNORECASE):
         return "mistral"
 
-
 @register_chat_template_matching_function
 def match_llama3_instruct(model_path: str):
     if re.search(r"llama-3.*instruct", model_path, re.IGNORECASE):
         return "llama-3-instruct"
-
 
 @register_chat_template_matching_function
 def match_chat_ml(model_path: str):
@@ -591,7 +575,6 @@ def match_chat_ml(model_path: str):
     ):
         return "chatml-llava"
 
-
 @register_chat_template_matching_function
 def match_chat_yi(model_path: str):
     if re.search(r"yi-vl", model_path, re.IGNORECASE) and not re.search(
@@ -601,12 +584,10 @@ def match_chat_yi(model_path: str):
     elif re.search(r"yi-1\.5.*chat", model_path, re.IGNORECASE):
         return "yi-1.5"
 
-
 @register_chat_template_matching_function
 def match_gemma_it(model_path: str):
     if re.search(r"gemma.*it", model_path, re.IGNORECASE):
         return "gemma-it"
-
 
 @register_chat_template_matching_function
 def match_openbmb_minicpm(model_path: str):
@@ -615,30 +596,25 @@ def match_openbmb_minicpm(model_path: str):
     elif re.search(r"minicpm-o", model_path, re.IGNORECASE):
         return "minicpmo"
 
-
 @register_chat_template_matching_function
 def match_c4ai_command_r(model_path: str):
     if re.search(r"c4ai-command-r", model_path, re.IGNORECASE):
         return "c4ai-command-r"
-
 
 @register_chat_template_matching_function
 def match_granite_instruct(model_path: str):
     if re.search(r"granite.*instruct", model_path, re.IGNORECASE):
         return "granite-3-instruct"
 
-
 @register_chat_template_matching_function
 def match_gemma3_instruct(model_path: str):
     if re.search(r"gemma-3", model_path, re.IGNORECASE):
         return "gemma-it"
 
-
 @register_chat_template_matching_function
 def match_internvl_chat(model_path: str):
     if re.search(r"internvl2_5", model_path, re.IGNORECASE):
         return "internvl-2-5"
-
 
 @register_chat_template_matching_function
 def match_interns1_chat(model_path: str):
@@ -646,7 +622,6 @@ def match_interns1_chat(model_path: str):
         return "interns1"
     if re.search(r"interns1", model_path, re.IGNORECASE):
         return "interns1"
-
 
 if __name__ == "__main__":
     messages = [

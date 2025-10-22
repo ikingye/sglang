@@ -1,39 +1,43 @@
-[build-system]
-requires = [
-  "scikit-build-core>=0.10",
-  "torch>=2.8.0",
-  "wheel",
+# SGLang内核库配置文件
+# 这个文件定义了SGLang高性能计算内核的构建配置和元数据
+
+[build-system]  # 构建系统配置
+requires = [  # 构建所需的依赖
+  "scikit-build-core>=0.10",  # 基于CMake的Python构建工具
+  "torch>=2.8.0",  # PyTorch深度学习框架
+  "wheel",  # Python包构建工具
 ]
-build-backend = "scikit_build_core.build"
+build-backend = "scikit_build_core.build"  # 使用scikit-build-core作为构建后端
 
-[project]
-name = "sgl-kernel"
-version = "0.3.3"
-description = "Kernel Library for SGLang"
-readme = "README.md"
-requires-python = ">=3.10"
-license = { file = "LICENSE" }
-classifiers = [
-  "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: Apache Software License",
-  "Environment :: GPU :: NVIDIA CUDA"
+[project]  # 项目基本信息
+name = "sgl-kernel"  # 包名称：SGLang内核库
+version = "0.3.3"  # 版本号
+description = "Kernel Library for SGLang"  # 项目描述：SGLang的内核库
+readme = "README.md"  # README文件路径
+requires-python = ">=3.10"  # 最低Python版本要求：3.10
+license = { file = "LICENSE" }  # 许可证文件
+classifiers = [  # PyPI分类标签
+  "Programming Language :: Python :: 3",  # Python 3编程语言
+  "License :: OSI Approved :: Apache Software License",  # Apache软件许可证
+  "Environment :: GPU :: NVIDIA CUDA"  # NVIDIA CUDA GPU环境
 ]
-dependencies = []
+dependencies = []  # 核心依赖（空列表，因为主要依赖在构建时处理）
 
-[project.urls]
-"Homepage" = "https://github.com/sgl-project/sglang/tree/main/sgl-kernel"
-"Bug Tracker" = "https://github.com/sgl-project/sglang/issues"
+[project.urls]  # 项目相关URL
+"Homepage" = "https://github.com/sgl-project/sglang/tree/main/sgl-kernel"  # 项目主页
+"Bug Tracker" = "https://github.com/sgl-project/sglang/issues"  # 问题跟踪器
 
-[tool.wheel]
-exclude = [
-  "dist*",
-  "tests*",
+[tool.wheel]  # Wheel包配置
+exclude = [  # 排除的文件和目录
+  "dist*",  # 构建输出目录
+  "tests*",  # 测试文件目录
 ]
 
-[tool.scikit-build]
-cmake.build-type = "Release"
-minimum-version = "build-system.requires"
+[tool.scikit-build]  # scikit-build配置
+cmake.build-type = "Release"  # CMake构建类型：发布版本
+minimum-version = "build-system.requires"  # 最低版本要求
 
-wheel.py-api = "cp310"
-wheel.license-files = []
-wheel.packages = ["python/sgl_kernel"]
+# Wheel包特定配置
+wheel.py-api = "cp310"  # Python API版本：CPython 3.10
+wheel.license-files = []  # 许可证文件列表（空）
+wheel.packages = ["python/sgl_kernel"]  # 包含的Python包路径

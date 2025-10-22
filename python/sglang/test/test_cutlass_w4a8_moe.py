@@ -8,7 +8,6 @@ import torch
 from sglang.srt.layers.moe.cutlass_w4a8_moe import cutlass_w4a8_moe
 from sglang.srt.layers.moe.topk import select_experts
 
-
 def pack_int4_values_to_int8(int4_values_interleaved: torch.Tensor) -> torch.Tensor:
     if int4_values_interleaved.shape[-1] % 2 != 0:
         raise ValueError(
@@ -23,7 +22,6 @@ def pack_int4_values_to_int8(int4_values_interleaved: torch.Tensor) -> torch.Ten
     packed_tensor = (high_nibbles << 4) | (low_nibbles & 0x0F)
 
     return packed_tensor.to(torch.int8)
-
 
 def pack_interleave(num_experts, ref_weight, ref_scale):
     n, k = ref_weight.shape[1], ref_weight.shape[2]
@@ -42,7 +40,6 @@ def pack_interleave(num_experts, ref_weight, ref_scale):
     w_scale = scale_interleaved.contiguous()
 
     return w_q, w_scale
-
 
 @pytest.mark.parametrize("M", [1, 2, 4, 8, 16])
 @pytest.mark.parametrize("N", [2048])
@@ -156,7 +153,6 @@ def test_cutlass_w4a8_moe(M, N, K, E, ep_size, topk, group_size, dtype):
     torch.testing.assert_close(output, ref_output, rtol=1e-2, atol=0.1)
     print("SUCCESS: Final output tensors are close.")
 
-
 def cutlass_moe(
     a: torch.Tensor,
     w1_q: torch.Tensor,
@@ -222,7 +218,6 @@ def cutlass_moe(
         a2_scale,
         apply_router_weight_on_input,
     )
-
 
 def ref(
     x: torch.Tensor,

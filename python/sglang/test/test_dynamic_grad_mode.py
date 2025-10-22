@@ -5,7 +5,6 @@ import torch
 from sglang.srt.utils import DynamicGradMode
 from sglang.test.test_utils import CustomTestCase
 
-
 class TestDynamicGradMode(CustomTestCase):
     def test_inference(self):
         # Test inference_mode
@@ -52,7 +51,6 @@ class TestDynamicGradMode(CustomTestCase):
 
         W = create_tensor_w()
         self.assertTrue(not W.requires_grad and W.is_inference())
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

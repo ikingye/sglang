@@ -81,7 +81,7 @@ class EagleDraftInput:
     req_pool_indices_for_draft_extend: torch.Tensor = None
 
     def prepare_for_extend(self, batch: ScheduleBatch):
-
+        # 将被验证通过的 token 覆盖到 batch.input_ids 中，原草稿 token 下移一格
         if batch.forward_mode.is_idle():
             return
 
@@ -105,6 +105,7 @@ class EagleDraftInput:
         topk: int,
         capture_hidden_mode: CaptureHiddenMode,
     ):
+        # 构造一个空的占位结构，方便调度器在 idle 时复用统一分支
         return cls(
             verified_id=torch.empty((0,), device=device, dtype=torch.int32),
             hidden_states=torch.empty((0, hidden_size), device=device, dtype=dtype),
@@ -120,11 +121,12 @@ class EagleDraftInput:
         batch: ScheduleBatch,
         speculative_num_steps: int,
     ):
-
+        # decode 验证完成后，重建下一轮 extend 所需的输入/位置信息
         if batch.forward_mode.is_idle():
             return
 
         batch.input_ids = self.verified_id
+        # accept_length_cpu 记录 draft 接受的 token 数，+1 后补上当前验证 token
         batch.extend_lens = [x + 1 for x in batch.spec_info.accept_length_cpu]
         batch.extend_num_tokens = sum(batch.extend_lens)
         batch.seq_lens = batch.spec_info.seq_lens_for_draft_extend
@@ -134,9 +136,11 @@ class EagleDraftInput:
 
         self.capture_hidden_mode = CaptureHiddenMode.LAST
         self.accept_length.add_(1)
+        # 新一轮 extend 需要重新构造位置编码与验证 token 占位
         self.positions = torch.empty_like(batch.input_ids, dtype=torch.long)
         self.verified_id = torch.empty_like(self.accept_length, dtype=torch.int32)
 
+        # 通过 triton kernel 生成扩展阶段的位置/验证 token 映射
         create_extend_after_decode_spec_info[(len(batch.seq_lens),)](
             batch.input_ids,
             batch.seq_lens,
@@ -153,9 +157,11 @@ class EagleDraftInput:
         paged_kernel_lens_sum: int,
         req_to_token: torch.Tensor,
     ):
+        # 构造 FlashInfer 所需的索引数组，使 Draft extend 能直接读取 KV
         bs = self.accept_length.numel()
         qo_indptr = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
         qo_indptr[1:] = torch.cumsum(self.accept_length, dim=0)
+        # cum_kv_seq_len 追踪各序列在 paged kernel 中的累积长度
         cum_kv_seq_len = torch.zeros((bs + 1,), dtype=torch.int32, device="cuda")
         cum_kv_seq_len[1:] = torch.cumsum(paged_kernel_lens, dim=0)
 
@@ -166,6 +172,7 @@ class EagleDraftInput:
             paged_kernel_lens_sum, dtype=torch.int32, device="cuda"
         )
 
+        # 生成 FlashInfer paged attention 所需的 kv_indices 列表
         create_flashinfer_kv_indices_triton[(bs,)](
             req_to_token,
             req_pool_indices,
@@ -178,12 +185,14 @@ class EagleDraftInput:
         return kv_indices, cum_kv_seq_len, qo_indptr, None
 
     def filter_batch(self, new_indices: torch.Tensor):
+        # 删除未保留的序列，保持草稿输入与后续批次一致
         self.topk_p = self.topk_p[: len(new_indices)]
         self.topk_index = self.topk_index[: len(new_indices)]
         self.hidden_states = self.hidden_states[: len(new_indices)]
         self.verified_id = self.verified_id[: len(new_indices)]
 
     def merge_batch(self, spec_info: EagleDraftInput):
+        # 将多次草稿结果拼接，形成一个更大的批次交给 draft worker
         if self.hidden_states is None:
             self.hidden_states = spec_info.hidden_states
             self.verified_id = spec_info.verified_id
@@ -256,7 +265,7 @@ class EagleVerifyInput:
         )
 
     def prepare_for_verify(self, batch: ScheduleBatch, page_size: int):
-
+        # 根据 draft_token 构造验证批次的 KV 写入位置，兼容分页/非分页两种缓存
         if batch.forward_mode.is_idle():
             return
 
@@ -296,6 +305,7 @@ class EagleVerifyInput:
         paged_kernel_lens_sum: int,
         req_to_token: torch.Tensor,
     ):
+        # verify 阶段生成注意力参数，与 draft_input 的逻辑保持对称
         batch_size = len(req_pool_indices)
         qo_indptr = torch.arange(
             0,

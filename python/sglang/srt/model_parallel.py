@@ -61,6 +61,7 @@ def _shard_tensor(
         slice(cur_offset, cur_offset + cur_shape)
         for cur_shape, cur_offset in zip(shape, offset)
     ]
+    # 直接按切片复制本地子块，避免再次通信，提高推理加载效率
     local_tensor = full_tensor[slices]
     return dt.DTensor.from_local(local_tensor, device_mesh, placements)
 
@@ -115,6 +116,7 @@ class RowwiseParallelMaybeWait(RowwiseParallel):
         )._prepare_output_fn(
             output_layouts, use_local_output, mod, outputs, device_mesh
         )
+        # wait_tensor 会在计算流继续前同步通信流，避免自定义算子读到未落地的数据
         return torch.distributed._functional_collectives.wait_tensor(outputs)
 
 
@@ -152,4 +154,5 @@ def tensor_parallel(
 
     # `apply` is a native method of `nn.Module` that recursively applies a
     # function to every submodule.
+    # 递归遍历子模块并根据 `_tp_plan` 标识插入张量并行策略
     module.apply(tplize)

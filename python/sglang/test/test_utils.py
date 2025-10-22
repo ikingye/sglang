@@ -93,16 +93,13 @@ DEFAULT_VIDEO_URL = "https://raw.githubusercontent.com/EvolvingLMMs-Lab/sglang/d
 
 DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH = 600
 
-
 def is_in_ci():
     """Return whether it is in CI runner."""
     return get_bool_env_var("SGLANG_IS_IN_CI")
 
-
 def is_in_amd_ci():
     """Return whether it is in an AMD CI runner."""
     return get_bool_env_var("SGLANG_AMD_CI")
-
 
 def _use_cached_default_models(model_repo: str):
     cache_dir = os.getenv("DEFAULT_MODEL_CACHE_DIR")
@@ -111,7 +108,6 @@ def _use_cached_default_models(model_repo: str):
         if os.path.isdir(model_path):
             return os.path.abspath(model_path)
     return ""
-
 
 if is_in_ci():
     DEFAULT_PORT_FOR_SRT_TEST_RUNNER = (
@@ -125,7 +121,6 @@ DEFAULT_URL_FOR_TEST = f"http://127.0.0.1:{DEFAULT_PORT_FOR_SRT_TEST_RUNNER + 10
 
 if is_in_amd_ci():
     DEFAULT_TIMEOUT_FOR_SERVER_LAUNCH = 3000
-
 
 def call_generate_lightllm(prompt, temperature, max_tokens, stop=None, url=None):
     assert url is not None
@@ -143,7 +138,6 @@ def call_generate_lightllm(prompt, temperature, max_tokens, stop=None, url=None)
     pred = res.json()["generated_text"][0]
     return pred
 
-
 def find_available_port(base_port: int):
     port = base_port + random.randint(100, 1000)
     while True:
@@ -153,7 +147,6 @@ def find_available_port(base_port: int):
             port += 42
         else:
             port -= 43
-
 
 def call_generate_vllm(prompt, temperature, max_tokens, stop=None, n=1, url=None):
     assert url is not None
@@ -172,7 +165,6 @@ def call_generate_vllm(prompt, temperature, max_tokens, stop=None, n=1, url=None
     else:
         pred = [x[len(prompt) :] for x in res.json()["text"]]
     return pred
-
 
 def call_generate_outlines(
     prompt, temperature, max_tokens, stop=None, regex=None, n=1, url=None
@@ -195,7 +187,6 @@ def call_generate_outlines(
         pred = [x[len(prompt) :] for x in res.json()["text"]]
     return pred
 
-
 def call_generate_srt_raw(prompt, temperature, max_tokens, stop=None, url=None):
     assert url is not None
 
@@ -212,7 +203,6 @@ def call_generate_srt_raw(prompt, temperature, max_tokens, stop=None, url=None):
     obj = res.json()
     pred = obj["text"]
     return pred
-
 
 def call_generate_guidance(
     prompt, temperature, max_tokens, stop=None, n=1, regex=None, model=None
@@ -236,7 +226,6 @@ def call_generate_guidance(
         rets.append(out["answer"])
     return rets if n > 1 else rets[0]
 
-
 def call_select_lightllm(context, choices, url=None):
     assert url is not None
 
@@ -252,7 +241,6 @@ def call_select_lightllm(context, choices, url=None):
         assert res.status_code == 200
         scores.append(0)
     return np.argmax(scores)
-
 
 def call_select_vllm(context, choices, url=None):
     assert url is not None
@@ -277,14 +265,12 @@ def call_select_vllm(context, choices, url=None):
         ret["prompt_score"] = score
     """
 
-
 def call_select_guidance(context, choices, model=None):
     assert model is not None
     from guidance import select
 
     out = model + context + select(choices, name="answer")
     return choices.index(out["answer"])
-
 
 def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
     parser.add_argument("--parallel", type=int, default=64)
@@ -322,7 +308,6 @@ def add_common_other_args_and_parse(parser: argparse.ArgumentParser):
         args.port = default_port.get(args.backend, None)
     return args
 
-
 def auto_config_device() -> str:
     """Auto-config available device platform"""
 
@@ -333,7 +318,6 @@ def auto_config_device() -> str:
         device = "cpu"
 
     return device
-
 
 def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
     parser.add_argument("--parallel", type=int, default=64)
@@ -353,7 +337,6 @@ def add_common_sglang_args_and_parse(parser: argparse.ArgumentParser):
 
     return args
 
-
 def select_sglang_backend(args: argparse.Namespace):
     from sglang.lang.backend.openai import OpenAI
     from sglang.lang.backend.runtime_endpoint import RuntimeEndpoint
@@ -367,7 +350,6 @@ def select_sglang_backend(args: argparse.Namespace):
     else:
         raise ValueError(f"Invalid backend: {args.backend}")
     return backend
-
 
 def _get_call_generate(args: argparse.Namespace):
     if args.backend == "lightllm":
@@ -390,7 +372,6 @@ def _get_call_generate(args: argparse.Namespace):
     else:
         raise ValueError(f"Invalid backend: {args.backend}")
 
-
 def _get_call_select(args: argparse.Namespace):
     if args.backend == "lightllm":
         return partial(call_select_lightllm, url=f"{args.host}:{args.port}/generate")
@@ -407,7 +388,6 @@ def _get_call_select(args: argparse.Namespace):
     else:
         raise ValueError(f"Invalid backend: {args.backend}")
 
-
 def get_call_generate(args: argparse.Namespace):
     call_generate = _get_call_generate(args)
 
@@ -420,7 +400,6 @@ def get_call_generate(args: argparse.Namespace):
 
     return func
 
-
 def get_call_select(args: argparse.Namespace):
     call_select = _get_call_select(args)
 
@@ -432,7 +411,6 @@ def get_call_select(args: argparse.Namespace):
             raise
 
     return func
-
 
 def _get_default_models():
     import inspect
@@ -453,11 +431,9 @@ def _get_default_models():
                 default_models.add(value.strip())
     return json.dumps(list(default_models))
 
-
 def try_cached_model(model_repo: str):
     model_dir = _use_cached_default_models(model_repo)
     return model_dir if model_dir else model_repo
-
 
 def popen_launch_server(
     model: str,
@@ -538,7 +514,6 @@ def popen_launch_server(
     start_time = time.perf_counter()
     with requests.Session() as session:
         while time.perf_counter() - start_time < timeout:
-
             return_code = process.poll()
             if return_code is not None:
                 # Server failed to start (non-zero exit code) or crashed
@@ -571,7 +546,6 @@ def popen_launch_server(
 
     kill_process_tree(process.pid)
     raise TimeoutError("Server failed to start within the timeout period.")
-
 
 def popen_launch_pd_server(
     model: str,
@@ -613,7 +587,6 @@ def popen_launch_pd_server(
 
     return process
 
-
 def run_with_timeout(
     func: Callable,
     args: tuple = (),
@@ -637,12 +610,10 @@ def run_with_timeout(
 
     return ret_value[0]
 
-
 @dataclass
 class TestFile:
     name: str
     estimated_time: float = 60
-
 
 def run_unittest_files(files: List[TestFile], timeout_per_file: float):
     tic = time.perf_counter()
@@ -698,10 +669,8 @@ def run_unittest_files(files: List[TestFile], timeout_per_file: float):
 
     return 0 if success else -1
 
-
 def get_similarities(vec1, vec2):
     return F.cosine_similarity(torch.tensor(vec1), torch.tensor(vec2), dim=0)
-
 
 def get_benchmark_args(
     base_url="",
@@ -752,7 +721,6 @@ def get_benchmark_args(
         device=device,
         pd_separated=pd_separated,
     )
-
 
 def run_bench_serving(
     model,
@@ -834,7 +802,6 @@ def run_bench_serving(
     assert res["completed"] == num_prompts
     return res
 
-
 def run_bench_serving_multi(
     model,
     base_url,
@@ -867,7 +834,6 @@ def run_bench_serving_multi(
         kill_process_tree(process.pid)
 
     return res_l
-
 
 def run_bench_one_batch(model, other_args):
     """Launch a offline process with automatic device detection.
@@ -923,7 +889,6 @@ def run_bench_one_batch(model, other_args):
 
     return prefill_latency, decode_throughput, decode_latency
 
-
 def run_bench_offline_throughput(model, other_args):
     command = [
         "python3",
@@ -961,7 +926,6 @@ def run_bench_offline_throughput(model, other_args):
 
     return output_throughput
 
-
 def run_bench_one_batch_server(
     model,
     base_url,
@@ -989,7 +953,6 @@ def run_bench_one_batch_server(
     finally:
         kill_process_tree(process.pid)
 
-
 def lcs(X, Y):
     m = len(X)
     n = len(Y)
@@ -1005,7 +968,6 @@ def lcs(X, Y):
                 L[i][j] = max(L[i - 1][j], L[i][j - 1])
 
     return L[m][n]
-
 
 def calculate_rouge_l(output_strs_list1, output_strs_list2):
     """calculate the ROUGE-L score"""
@@ -1023,10 +985,8 @@ def calculate_rouge_l(output_strs_list1, output_strs_list2):
 
     return rouge_l_scores
 
-
 STDERR_FILENAME = "/tmp/stderr.txt"
 STDOUT_FILENAME = "/tmp/stdout.txt"
-
 
 def read_output(output_lines: List[str], filename: str = STDERR_FILENAME):
     """Print the output in real time with another thread."""
@@ -1047,7 +1007,6 @@ def read_output(output_lines: List[str], filename: str = STDERR_FILENAME):
             output_lines.append(line)
             pt += 1
         time.sleep(0.1)
-
 
 def run_and_check_memory_leak(
     workload_func,
@@ -1121,7 +1080,6 @@ def run_and_check_memory_leak(
     if assert_has_abort:
         assert has_abort
 
-
 def run_command_and_capture_output(command, env: Optional[dict] = None):
     stdout = open(STDOUT_FILENAME, "w")
     stderr = open(STDERR_FILENAME, "w")
@@ -1147,7 +1105,6 @@ def run_command_and_capture_output(command, env: Optional[dict] = None):
     t.join()
 
     return output_lines
-
 
 def run_mmlu_test(
     disable_radix_cache=False,
@@ -1179,7 +1136,6 @@ def run_mmlu_test(
         chunked_prefill_size,
         assert_has_abort=False,
     )
-
 
 def run_mulit_request_test(
     disable_radix_cache=False,
@@ -1219,7 +1175,6 @@ def run_mulit_request_test(
         assert_has_abort=False,
     )
 
-
 def write_github_step_summary(content):
     if not os.environ.get("GITHUB_STEP_SUMMARY"):
         logging.warning("GITHUB_STEP_SUMMARY environment variable not set")
@@ -1227,7 +1182,6 @@ def write_github_step_summary(content):
 
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
         f.write(content)
-
 
 def run_logprob_check(self: unittest.TestCase, arg: Tuple):
     (
@@ -1303,7 +1257,6 @@ def run_logprob_check(self: unittest.TestCase, arg: Tuple):
                             else:
                                 raise
 
-
 def send_generate_requests(base_url: str, num_requests: int) -> List[str]:
     """Sends generate request serially and returns status codes. Max concurrency is 1."""
 
@@ -1326,7 +1279,6 @@ def send_generate_requests(base_url: str, num_requests: int) -> List[str]:
         return response.status_code
 
     return [generate() for _ in range(num_requests)]
-
 
 async def send_concurrent_generate_requests(
     base_url: str, num_requests: int
@@ -1355,7 +1307,6 @@ async def send_concurrent_generate_requests(
     tasks = [asyncio.create_task(async_generate()) for _ in range(num_requests)]
     return await asyncio.gather(*tasks)
 
-
 class CustomTestCase(unittest.TestCase):
     def _callTestMethod(self, method):
         max_retry = int(
@@ -1365,7 +1316,6 @@ class CustomTestCase(unittest.TestCase):
             lambda: super(CustomTestCase, self)._callTestMethod(method),
             max_retry=max_retry,
         )
-
 
 def dump_bench_raw_result(
     path: str,
@@ -1392,7 +1342,6 @@ def dump_bench_raw_result(
 
     print(f"BenchRawResultDumper save results to {path}")
     Path(path).write_text("\n".join(json.dumps(row) for row in rows))
-
 
 def _ensure_remove_suffix(text: str, suffix: str):
     assert text.endswith(suffix)

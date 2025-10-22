@@ -45,6 +45,7 @@ class BatchedPresencePenalizer(_BatchedPenalizer):
             index=output_ids.unsqueeze(1),
             src=self.presence_penalties,
         )
+        # presence 惩罚仅需标记是否出现过一次，因此使用 scatter 覆写而非累加
 
     def _apply(self, logits: torch.Tensor) -> torch.Tensor:
         logits.sub_(self.cumulated_presence_penalties)

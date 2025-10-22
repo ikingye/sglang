@@ -88,6 +88,7 @@ class SchedulePolicy:
         self.enable_hierarchical_cache = enable_hierarchical_cache
 
         # It is used to find the matching prefix for in-batch prefix caching.
+        # 等待队列自己的基数树，用于检测请求之间的公共前缀
         self.waiting_queue_radix_tree = RadixCache(
             req_to_token_pool=None,
             token_to_kv_pool_allocator=None,
@@ -96,10 +97,12 @@ class SchedulePolicy:
         )
 
     def calc_priority(self, waiting_queue: List[Req]) -> bool:
+        """根据策略对等待队列排序；返回是否已经计算过前缀信息。"""
         if self.policy == CacheAgnosticPolicy.FCFS:
             # A shortcut for FCFS
             return False
 
+        # 针对特殊情况调整策略（如队列过长时关闭前缀匹配）
         policy = self._determine_active_policy(waiting_queue)
 
         prefix_computed = False
@@ -132,6 +135,7 @@ class SchedulePolicy:
         if self.policy == CacheAwarePolicy.LPM and len(waiting_queue) > 128:
             # Turn off the expensive prefix matching and sorting when the #queue is large.
             return CacheAgnosticPolicy.FCFS
+        # 其余情况沿用用户配置的策略
         return self.policy
 
     def _validate_and_adjust_policy(
@@ -145,6 +149,7 @@ class SchedulePolicy:
             if getattr(tree_cache, "disable", True):
                 # If tree_cache is disabled, using CacheAgnosticPolicy policy
                 return CacheAgnosticPolicy.FCFS
+            # 树缓存可用时保留前缀感知策略
             return policy_enum
         except ValueError:
             try:
@@ -163,7 +168,9 @@ class SchedulePolicy:
         self.waiting_queue_radix_tree.reset()
 
         for r in waiting_queue:
+            # 首先根据缓存树获取已有的最长前缀命中
             prefix_ids = r.adjust_max_prefix_ids()
+            # 返回的 prefix_indices/last_node 会作为后续 Evict/Prefill 的依据
 
             # NOTE: the prefix_indices must always be aligned with last_node
             r.prefix_indices, r.last_node, r.last_host_node, r.host_hit_length = (
@@ -190,6 +197,7 @@ class SchedulePolicy:
                     temporary_deprioritized.add(r.rid)
                 else:
                     # Insert with a dummy key
+                    # 没有触发降权时，把该前缀塞进等待队列的临时基数树
                     self.waiting_queue_radix_tree.insert(
                         prefix_ids, torch.empty(len(prefix_ids), dtype=torch.bool)
                     )
@@ -220,7 +228,9 @@ class SchedulePolicy:
         node_to_weight = defaultdict(int)
         for node in last_node_to_reqs:
             node_to_weight[node] = len(last_node_to_reqs[node])
+        # 自顶向下累计子树权重，倾向调度热点前缀下的请求
         SchedulePolicy._calc_weight(tree_cache.root_node, node_to_weight)
+        # DFS 展开时按照权重排序，优先消费高命中分支
 
         waiting_queue.clear()
         SchedulePolicy._get_dfs_priority(
@@ -245,6 +255,7 @@ class SchedulePolicy:
         for child in cur_node.children.values():
             SchedulePolicy._calc_weight(child, node_to_weight)
             node_to_weight[cur_node] += node_to_weight[child]
+        # 若当前节点无请求命中，权重保持为 0
 
     @staticmethod
     def _get_dfs_priority(
@@ -254,6 +265,7 @@ class SchedulePolicy:
         q: List,
     ) -> None:
         childs = [child for child in cur_node.children.values()]
+        # 权重越大越靠前，确保缓存命中率优先
         childs.sort(key=lambda x: -node_to_priority[x])
         for child in childs:
             SchedulePolicy._get_dfs_priority(
@@ -280,10 +292,12 @@ class PrefillAdder:
         rem_chunk_tokens: Optional[int],
         mixed_with_decode_tokens: int = 0,
     ):
+        # 记录缓存池、树缓存与正在运行 batch 的上下文信息，用于后续预算计算
         self.page_size = page_size
         self.tree_cache = tree_cache
         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
         self.running_batch = running_batch
+        # new_token_ratio 控制一次 Prefill 能额外占用的 token 份额
         self.new_token_ratio = new_token_ratio
         self.rem_input_tokens = rem_input_tokens - mixed_with_decode_tokens
         self.rem_chunk_tokens = rem_chunk_tokens
@@ -293,6 +307,7 @@ class PrefillAdder:
         self.rem_total_token_offset = mixed_with_decode_tokens
         self.cur_rem_token_offset = mixed_with_decode_tokens
 
+        # req_states 会缓存每个候选请求的评估结果，避免重复计算
         self.req_states = None
         self.can_run_list = []
         self.new_chunked_req = None
@@ -319,6 +334,7 @@ class PrefillAdder:
     @property
     def rem_total_tokens(self):
         if self.is_hybrid:
+            # SWA 混合缓存需要分别考虑 full/swa 两个池子的可用与可驱逐空间
             available_and_evictable = min(
                 self.token_to_kv_pool_allocator.full_available_size()
                 + self.tree_cache.full_evictable_size(),
@@ -331,6 +347,7 @@ class PrefillAdder:
                 + self.tree_cache.evictable_size()
             )
 
+        # total_offset 累积了已经占用或预留的 token 预算
         return available_and_evictable - self.rem_total_token_offset
 
     @property
@@ -354,12 +371,15 @@ class PrefillAdder:
         return -(-tokens // self.page_size) * self.page_size
 
     def budget_state(self):
+        # 无剩余 token 或 chunk 配额则直接拒绝后续请求
         if self.rem_total_tokens <= 0 or self.cur_rem_tokens <= 0:
+            # KV 空间不足，停止再拉取请求
             return AddReqResult.NO_TOKEN
 
         if self.rem_input_tokens <= 0 or (
             self.rem_chunk_tokens is not None and self.rem_chunk_tokens <= 0
         ):
+            # 当前 chunk 或输入 token 已达上限
             return AddReqResult.OTHER
 
         return AddReqResult.CONTINUE
@@ -373,6 +393,7 @@ class PrefillAdder:
         self.rem_total_token_offset += extend_input_len + max_new_tokens
         self.cur_rem_token_offset += extend_input_len
         self.rem_input_tokens -= extend_input_len
+        # chunk 模式还要同步扣减当前 chunk 预算
         if self.rem_chunk_tokens is not None:
             self.rem_chunk_tokens -= extend_input_len
 
@@ -400,6 +421,7 @@ class PrefillAdder:
     @contextmanager
     def _lock_node(self, last_node: TreeNode):
         if self.is_hybrid:
+            # SWA 模式的 radix cache 需要附带 UUID 进行分片锁管理
             try:
                 swa_uuid_for_lock = self.tree_cache.inc_lock_ref(last_node)
                 yield None
@@ -441,6 +463,7 @@ class PrefillAdder:
                 self.req_states.insert(i, (tokens_left, tokens_occupied))
 
         if self.req_states is None:
+            # 初始化 req_states，记录现有请求剩余 token 预算与占用量，便于后续释放策略估算
             self.req_states = []
             add_req_state(req)
             if self.running_batch is not None:
@@ -462,9 +485,11 @@ class PrefillAdder:
             for i, (tokens_left, tokens_occupied) in enumerate(self.req_states):
                 # tokens_left gives a reservative calculation as the last token is not stored
                 bs = len(self.req_states) - i
+                # 对每个可能提前结束的请求估算腾挪出的 token 数，确保忽略 EOS 时仍留有缓冲
                 min_free_tokens = cur_rem_tokens + tokens_freed - tokens_left * bs
                 # reserve tokens for corner cases
                 if min_free_tokens <= IGNORE_EOS_RESERVE_TOKENS * bs:
+                    # 预留少量冗余空间，避免忽略 eos 时出现瞬时 OOM
                     return AddReqResult.NO_TOKEN
                 tokens_freed += tokens_occupied
 
@@ -519,6 +544,7 @@ class PrefillAdder:
                 return AddReqResult.NO_TOKEN
 
             if req.host_hit_length > 0:
+                # 有命中过 host cache 时，将缺失部分从 CPU 树缓存回填进 prefix_indices
                 new_indices, req.last_node = self.tree_cache.init_load_back(
                     req.last_host_node, req.host_hit_length
                 )
@@ -554,6 +580,7 @@ class PrefillAdder:
                     return AddReqResult.OTHER
 
                 # Chunked prefill
+                # 仅保留当前 chunk 可容纳的部分，其余片段将在后续批次继续 prefill
                 req.extend_input_len = trunc_len
                 req.fill_ids = req.fill_ids[: len(req.prefix_indices) + trunc_len]
 

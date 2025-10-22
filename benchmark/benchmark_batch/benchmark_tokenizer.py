@@ -1,34 +1,60 @@
-import random
-import time
-from statistics import mean
+"""
+分词器性能基准测试
+这个脚本用于测试和比较不同批次大小下的分词器性能，包括：
+- 顺序分词 vs 批量分词的性能对比
+- 不同批次大小的性能表现
+- 分词速度的统计测量
 
-from transformers import AutoTokenizer
+测试目的：
+- 评估分词器的批量处理能力
+- 找到最优的批次大小
+- 为实际应用提供性能参考
+"""
 
-# CONFIG
+import random  # 随机数生成
+import time  # 时间测量
+from statistics import mean  # 统计平均值
+
+from transformers import AutoTokenizer  # HuggingFace分词器
+
+# 配置参数
 TOKENIZER_DIR = (
     "/shared/public/sharing/fait360brew/training/models/meta-llama/Llama-3.2-3B"
-)
-NUM_TOKENS = 20000  # Each prompt should contain this many tokens
-BATCH_SIZES = [1, 2, 4, 8]  # Test different batch sizes
-NUM_RUNS = 5  # Number of runs for each batch size to get reliable measurements
+)  # 分词器模型路径
+NUM_TOKENS = 20000  # 每个提示应该包含的token数量
+BATCH_SIZES = [1, 2, 4, 8]  # 测试不同的批次大小
+NUM_RUNS = 5  # 每个批次大小的运行次数，用于获得可靠的测量结果
 
 
 def generate_random_prompts(num_prompts, num_tokens, tokenizer):
-    """Generate random prompts with specified token count."""
-    vocab_size = tokenizer.vocab_size
+    """
+    生成指定数量的随机提示，每个提示包含指定数量的token
+
+    参数:
+    num_prompts: 要生成的提示数量
+    num_tokens: 每个提示的token数量
+    tokenizer: 分词器实例
+
+    返回:
+    list: 生成的提示列表
+    """
+    vocab_size = tokenizer.vocab_size  # 获取词汇表大小
     all_prompts = []
 
     print(f"Generating {num_prompts} random prompts with {num_tokens} tokens each...")
     for i in range(num_prompts):
-        # Generate random token IDs - this directly gives us the exact token count
+        # 生成随机token ID - 这直接给我们确切的token数量
         random_token_ids = [
             random.randint(0, vocab_size - 1) for _ in range(num_tokens)
         ]
+        # 解码为文本
         random_text = tokenizer.decode(
             random_token_ids, clean_up_tokenization_spaces=True
         )
 
+        # 格式化提示
         prompt = f"Prompt {i}: {random_text}"
+        # 验证token数量
         tokens = tokenizer.encode(prompt)
         print(f"  Prompt {i}: {len(tokens)} tokens")
         all_prompts.append(prompt)
@@ -37,17 +63,27 @@ def generate_random_prompts(num_prompts, num_tokens, tokenizer):
 
 
 def benchmark_sequential_vs_batch(prompts, batch_size, tokenizer):
-    """Compare sequential vs batch tokenization for a given batch size."""
+    """
+    比较给定批次大小下的顺序分词和批量分词性能
 
-    # Sequential tokenization using encode()
+    参数:
+    prompts: 提示列表
+    batch_size: 批次大小
+    tokenizer: 分词器实例
+
+    返回:
+    tuple: (顺序分词平均时间, 批量分词平均时间)
+    """
+
+    # 使用encode()进行顺序分词
     sequential_times = []
     for run in range(NUM_RUNS):
-        batch_prompts = prompts[:batch_size]  # Use same prompts for fair comparison
+        batch_prompts = prompts[:batch_size]  # 使用相同的提示进行公平比较
 
         start_time = time.perf_counter()
         for prompt in batch_prompts:
-            tokens = tokenizer.encode(prompt)
-        sequential_time = (time.perf_counter() - start_time) * 1000
+            tokens = tokenizer.encode(prompt)  # 逐个分词
+        sequential_time = (time.perf_counter() - start_time) * 1000  # 转换为毫秒
         sequential_times.append(sequential_time)
 
     # Batch tokenization using tokenizer()

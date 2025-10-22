@@ -91,7 +91,6 @@ TEST_CASES = [
     },
 ]
 
-
 class MockForwardBatch(ForwardBatch):
     def __init__(self, max_chunk_capacity: int, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -100,7 +99,6 @@ class MockForwardBatch(ForwardBatch):
     def get_max_chunk_capacity(self):
         return self.max_chunk_capacity
 
-
 class MockReqToTokenPool:
     def __init__(self, batch_size, seq_len, device):
         self.req_to_token = (
@@ -108,7 +106,6 @@ class MockReqToTokenPool:
             .reshape(batch_size, seq_len)
             .to(torch.int32)
         )
-
 
 # Test correctness of triton kernel for computing kv indices
 def check_kv_indices(forward_batch):
@@ -131,7 +128,6 @@ def check_kv_indices(forward_batch):
             )
             running_ptr += seq_len
         assert torch.allclose(computed_kv_indices, ref_kv_indices)
-
 
 @unittest.skipIf(not torch.cuda.is_available(), "Test requires CUDA")
 class TestPrefixChunkInfo(CustomTestCase):
@@ -220,7 +216,6 @@ class TestPrefixChunkInfo(CustomTestCase):
             )
 
             check_kv_indices(forward_batch)
-
 
 if __name__ == "__main__":
     unittest.main()

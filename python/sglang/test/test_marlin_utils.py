@@ -24,9 +24,7 @@ from sglang.srt.layers.quantization.utils import (
     sort_weights,
 )
 
-
 class MarlinWorkspace:
-
     def __init__(self, out_features, min_thread_n, max_parallel):
         assert (
             out_features % min_thread_n == 0
@@ -37,7 +35,6 @@ class MarlinWorkspace:
         max_workspace_size = (out_features // min_thread_n) * max_parallel
 
         self.scratch = torch.zeros(max_workspace_size, dtype=torch.int, device="cuda")
-
 
 def marlin_permute_weights(q_w, size_k, size_n, perm, tile=GPTQ_MARLIN_TILE):
     assert q_w.shape == (size_k, size_n)
@@ -52,7 +49,6 @@ def marlin_permute_weights(q_w, size_k, size_n, perm, tile=GPTQ_MARLIN_TILE):
     q_w = q_w.reshape((-1, perm.numel()))[:, perm].reshape(q_w.shape)
 
     return q_w
-
 
 def marlin_weights(q_w, size_k, size_n, num_bits, perm):
     # Permute
@@ -71,7 +67,6 @@ def marlin_weights(q_w, size_k, size_n, num_bits, perm):
     q_packed = torch.from_numpy(q_packed.astype(np.int32)).to(orig_device)
 
     return q_packed
-
 
 def get_weight_perm(num_bits: int):
     perm_list: list[int] = []
@@ -101,7 +96,6 @@ def get_weight_perm(num_bits: int):
     perm = perm.reshape((-1, len(interleave)))[:, interleave].ravel()
     perm = torch.from_numpy(perm)
     return perm
-
 
 def marlin_quantize(
     w: torch.Tensor,
@@ -140,7 +134,6 @@ def marlin_quantize(
         res_list[i] = res_list[i].to(w.device)
 
     return res_list
-
 
 def awq_marlin_quantize(w: torch.Tensor, quant_type: ScalarType, group_size: int):
     size_k, size_n = w.shape

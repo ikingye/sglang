@@ -43,12 +43,10 @@ ASSISTANT_SUFFIX = "Assistant:"
 
 global args
 
-
 # don't want to import sglang package here
 def _get_bool_env_var(name: str, default: str = "false") -> bool:
     value = os.getenv(name, default)
     return value.lower() in ("true", "1")
-
 
 def _create_bench_client_session():
     # When the pressure is big, the read buffer could be full before aio thread read
@@ -62,7 +60,6 @@ def _create_bench_client_session():
         timeout=aiohttp_timeout, read_bufsize=BENCH_AIOHTTP_READ_BUFSIZE_BYTES
     )
 
-
 @dataclass
 class RequestFuncInput:
     prompt: str
@@ -73,7 +70,6 @@ class RequestFuncInput:
     lora_name: str
     image_data: str
     extra_request_body: Dict[str, Any]
-
 
 @dataclass
 class RequestFuncOutput:
@@ -92,14 +88,11 @@ class RequestFuncOutput:
         output.prompt_len = request_func_input.prompt_len
         return output
 
-
 def remove_prefix(text: str, prefix: str) -> str:
     return text[len(prefix) :] if text.startswith(prefix) else text
 
-
 def remove_suffix(text: str, suffix: str) -> str:
     return text[: -len(suffix)] if text.endswith(suffix) else text
-
 
 def get_auth_headers() -> Dict[str, str]:
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -107,7 +100,6 @@ def get_auth_headers() -> Dict[str, str]:
         return {"Authorization": f"Bearer {api_key}"}
     else:
         return {}
-
 
 # trt llm does not support ignore_eos
 # https://github.com/triton-inference-server/tensorrtllm_backend/issues/505
@@ -177,7 +169,6 @@ async def async_request_trt_llm(
         if pbar:
             pbar.update(1)
         return output
-
 
 # set ignore_eos True by default
 async def async_request_openai_completions(
@@ -263,7 +254,6 @@ async def async_request_openai_completions(
     if pbar:
         pbar.update(1)
     return output
-
 
 async def async_request_openai_chat_completions(
     request_func_input: RequestFuncInput,
@@ -396,7 +386,6 @@ async def async_request_openai_chat_completions(
         pbar.update(1)
     return output
 
-
 async def async_request_truss(
     request_func_input: RequestFuncInput,
     pbar: Optional[tqdm] = None,
@@ -473,7 +462,6 @@ async def async_request_truss(
     if pbar:
         pbar.update(1)
     return output
-
 
 async def async_request_sglang_generate(
     request_func_input: RequestFuncInput,
@@ -571,13 +559,11 @@ async def async_request_sglang_generate(
         pbar.update(1)
     return output
 
-
 async def async_request_gserver(
     request_func_input: RequestFuncInput,
     pbar: Optional[tqdm] = None,
 ) -> RequestFuncOutput:
     raise NotImplementedError()
-
 
 async def async_request_profile(api_url: str) -> RequestFuncOutput:
     async with _create_bench_client_session() as session:
@@ -596,7 +582,6 @@ async def async_request_profile(api_url: str) -> RequestFuncOutput:
 
     return output
 
-
 def get_model(pretrained_model_name_or_path: str) -> str:
     if os.getenv("SGLANG_USE_MODELSCOPE", "false").lower() == "true":
         import huggingface_hub.constants
@@ -610,7 +595,6 @@ def get_model(pretrained_model_name_or_path: str) -> str:
 
         return model_path
     return pretrained_model_name_or_path
-
 
 def get_tokenizer(
     pretrained_model_name_or_path: str,
@@ -633,7 +617,6 @@ def get_tokenizer(
     return AutoTokenizer.from_pretrained(
         pretrained_model_name_or_path, trust_remote_code=True
     )
-
 
 def get_dataset(args, tokenizer):
     tokenize_prompt = getattr(args, "tokenize_prompt", False)
@@ -683,7 +666,6 @@ def get_dataset(args, tokenizer):
         raise ValueError(f"Unknown dataset: {args.dataset_name}")
     return input_requests
 
-
 ASYNC_REQUEST_FUNCS = {
     "sglang": async_request_sglang_generate,
     "sglang-native": async_request_sglang_generate,
@@ -697,7 +679,6 @@ ASYNC_REQUEST_FUNCS = {
     "gserver": async_request_gserver,
     "truss": async_request_truss,
 }
-
 
 @dataclass
 class BenchmarkMetrics:
@@ -731,9 +712,7 @@ class BenchmarkMetrics:
     p99_e2e_latency_ms: float
     concurrency: float
 
-
 SHAREGPT_URL = "https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"
-
 
 def download_and_cache_file(url: str, filename: Optional[str] = None):
     """Read and cache a file from a url."""
@@ -768,7 +747,6 @@ def download_and_cache_file(url: str, filename: Optional[str] = None):
 
     return filename
 
-
 def is_file_valid_json(path):
     if not os.path.isfile(path):
         return False
@@ -784,14 +762,12 @@ def is_file_valid_json(path):
         )
         return False
 
-
 @dataclass
 class DatasetRow:
     prompt: str
     prompt_len: int
     output_len: int
     image_data: Optional[str] = None
-
 
 def sample_mmmu_requests(
     num_requests: int,
@@ -923,7 +899,6 @@ def sample_mmmu_requests(
     print(f"\nCreated {len(filtered_dataset)} MMMU prompts")
     return filtered_dataset
 
-
 def sample_sharegpt_requests(
     dataset_path: str,
     num_requests: int,
@@ -1008,7 +983,6 @@ def sample_sharegpt_requests(
     print(f"#Input tokens: {np.sum([x.prompt_len for x in filtered_dataset])}")
     print(f"#Output tokens: {np.sum([x.output_len for x in filtered_dataset])}")
     return filtered_dataset
-
 
 def sample_random_requests(
     input_len: int,
@@ -1112,13 +1086,11 @@ def sample_random_requests(
     print(f"#Output tokens: {np.sum(output_lens)}")
     return input_requests
 
-
 def gen_prompt(tokenizer, token_num):
     """Generate a random prompt of specified token length using tokenizer vocabulary."""
     all_available_tokens = list(tokenizer.get_vocab().values())
     selected_tokens = random.choices(all_available_tokens, k=token_num)
     return tokenizer.decode(selected_tokens)
-
 
 def get_gen_prefix_cache_path(args, tokenizer):
     """Create cache directory under ~/.cache/sglang/benchmark"""
@@ -1131,7 +1103,6 @@ def get_gen_prefix_cache_path(args, tokenizer):
         f"{tokenizer.__class__.__name__}.pkl"
     )
     return cache_dir / cache_key
-
 
 def sample_generated_shared_prefix_requests(
     num_groups: int,
@@ -1212,7 +1183,6 @@ def sample_generated_shared_prefix_requests(
 
     return input_requests
 
-
 async def get_request(
     input_requests: List[DatasetRow],
     request_rate: float,
@@ -1229,7 +1199,6 @@ async def get_request(
         interval = np.random.exponential(1.0 / request_rate)
         # The next request will be sent after the interval.
         await asyncio.sleep(interval)
-
 
 def calculate_metrics(
     input_requests: List[DatasetRow],
@@ -1308,7 +1277,6 @@ def calculate_metrics(
     )
 
     return metrics, output_lens
-
 
 async def benchmark(
     backend: str,
@@ -1603,7 +1571,6 @@ async def benchmark(
 
     return result | result_details
 
-
 def check_chat_template(model_path):
     try:
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -1612,12 +1579,10 @@ def check_chat_template(model_path):
         print(f"Fail to load tokenizer config with error={e}")
         return False
 
-
 def set_global_args(args_: argparse.Namespace):
     """Set the global args."""
     global args
     args = args_
-
 
 def run_benchmark(args_: argparse.Namespace):
     global args
@@ -1773,7 +1738,6 @@ def run_benchmark(args_: argparse.Namespace):
         )
     )
 
-
 def set_ulimit(target_soft_limit=65535):
     resource_type = resource.RLIMIT_NOFILE
     current_soft, current_hard = resource.getrlimit(resource_type)
@@ -1784,13 +1748,11 @@ def set_ulimit(target_soft_limit=65535):
         except ValueError as e:
             print(f"Fail to set RLIMIT_NOFILE: {e}")
 
-
 class LoRAPathAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, [])
         for lora_name in values:
             getattr(namespace, self.dest).append(lora_name)
-
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Benchmark the online serving throughput.")

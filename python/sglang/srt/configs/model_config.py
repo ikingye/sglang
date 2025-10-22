@@ -12,6 +12,14 @@
 # limitations under the License.
 # ==============================================================================
 
+"""
+SGLang模型配置模块
+这个模块定义了SGLang的模型配置类，用于管理大语言模型的配置参数。
+
+ModelConfig类封装了模型的所有配置信息，包括架构参数、量化设置、
+注意力机制配置等，为模型加载和推理提供统一的配置接口。
+"""
+
 import json
 import logging
 import math
@@ -37,11 +45,21 @@ logger = logging.getLogger(__name__)
 
 
 class AttentionArch(IntEnum):
+    """
+    注意力架构类型枚举
+
+    定义了SGLang支持的注意力机制架构类型。
+    """
     MLA = auto()
     MHA = auto()
 
 
 class ModelImpl(str, Enum):
+    """
+    模型实现类型枚举
+
+    定义了SGLang支持的模型实现方式。
+    """
     AUTO = "auto"
     SGLANG = "sglang"
     TRANSFORMERS = "transformers"
@@ -177,6 +195,7 @@ class ModelConfig:
                 else:
                     raise ValueError(
                         f"User-specified context_length ({context_length}) is greater than the derived context_length ({derived_context_len}). "
+
                         f"This may lead to incorrect model outputs or CUDA errors. Note that the derived context_length may differ from max_position_embeddings in the model's config. "
                         f"To allow overriding this maximum, set the env var SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1"
                     )

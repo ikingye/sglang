@@ -20,6 +20,7 @@ class BatchedPenalizerOrchestrator:
         self.batch = batch
         self.device = batch.device
         self.penalizers = {Penalizer: Penalizer(self) for Penalizer in penalizers}
+        # 按需实例化各类惩罚器，构造函数会读取 batch 共享上下文
 
         is_required = False
         for penalizer in self.penalizers.values():
@@ -38,6 +39,7 @@ class BatchedPenalizerOrchestrator:
             output_ids (torch.Tensor): The output tokens.
         """
         for penalizer in self.penalizers.values():
+            # 各种惩罚器共享同一份输出 token 流，自行决定是否更新内部状态
             penalizer.cumulate_output_tokens(output_ids=output_ids)
 
     def apply(self, logits: torch.Tensor) -> torch.Tensor:
@@ -52,6 +54,7 @@ class BatchedPenalizerOrchestrator:
             torch.Tensor: The logits after applying the penalizers.
         """
         for penalizer in self.penalizers.values():
+            # 惩罚器可能直接对 logits 做原位修改，调用顺序会累计效果
             penalizer.apply(logits)
 
     def filter(self, keep_indices: torch.Tensor):

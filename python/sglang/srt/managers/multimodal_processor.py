@@ -13,6 +13,7 @@ PROCESSOR_MAPPING = {}
 
 
 def import_processors():
+    """动态扫描 `multimodal.processors` 包，把声明了 `models` 列表的处理器注册起来。"""
     package_name = "sglang.srt.multimodal.processors"
     package = importlib.import_module(package_name)
     for _, name, ispkg in pkgutil.iter_modules(package.__path__, package_name + "."):

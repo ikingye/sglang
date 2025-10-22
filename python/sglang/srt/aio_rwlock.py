@@ -7,6 +7,7 @@ class RWLock:
         self._lock = asyncio.Lock()
 
         # Condition variable used to wait for state changes
+        # 使用同一个底层锁保证等待与状态写入原子化
         self._cond = asyncio.Condition(self._lock)
 
         # Number of readers currently holding the lock
@@ -45,6 +46,7 @@ class RWLock:
             # Wait until there is no active writer or waiting writer
             # to ensure fairness.
             while self._writer_active or self._waiting_writers > 0:
+                # 有写者活跃或排队时禁止新增读者，避免饥饿
                 await self._cond.wait()
             self._readers += 1
 
@@ -54,6 +56,7 @@ class RWLock:
             # If this was the last reader, wake up anyone waiting
             # (potentially a writer or new readers).
             if self._readers == 0:
+                # 最后一个读者离开后唤醒等待的写者/读者
                 self._cond.notify_all()
 
     async def acquire_writer(self):
@@ -63,6 +66,7 @@ class RWLock:
             try:
                 # Wait while either a writer is active or readers are present
                 while self._writer_active or self._readers > 0:
+                    # 写者等待所有读者释放，确保独占语义
                     await self._cond.wait()
                 self._writer_active = True
             finally:

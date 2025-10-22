@@ -36,7 +36,6 @@ provider_to_models = {
     },
 }
 
-
 async def fetch_responses(
     client, prompt, semaphore, index, provider, model_size, output_dir, max_tokens
 ):
@@ -60,7 +59,6 @@ async def fetch_responses(
         with open(output_file, "wb") as f:
             pickle.dump(response, f)
 
-
 TASK_TO_MAX_TOKENS = {
     "evals__mmlu__details": 1,
     "evals__mmlu__0_shot__cot__details": 1024,
@@ -76,14 +74,12 @@ TASK_TO_EVAL_SET = {
     "gsm8k": "evals__gsm8k__details",
 }
 
-
 class CustomAsyncHTTPXClient(httpx.AsyncClient):
     async def send(self, request: httpx.Request, *args, **kwargs) -> httpx.Response:
         request.url = httpx.URL(
             f"https://model-{os.getenv('MODEL_ID')}.api.baseten.co/development/predict"
         )
         return await super().send(request, *args, **kwargs)
-
 
 def get_client(provider):
     if provider not in "b10":
@@ -98,7 +94,6 @@ def get_client(provider):
         ),
         "sgl": AsyncOpenAI(base_url="http://127.0.0.1:30000/v1/"),
     }[provider]
-
 
 # Define the benchmark function
 async def benchmark(args):
@@ -141,12 +136,10 @@ async def benchmark(args):
     ):
         await future
 
-
 def get_mmlu_answer(response):
     if response is not None:
         return response.choices[0].text.lstrip().rstrip().upper().replace(".", "")
     return None
-
 
 def get_mmlu_cot_answer(response):
     pattern = r"The best answer is (.+)\.?"
@@ -169,7 +162,6 @@ def get_mmlu_cot_answer(response):
     if match:
         return match.group(1).replace(".", "")
 
-
 def get_answer_gsm8k(response):
     pattern = r"The final answer is (.+)\.?"
     match = re.search(pattern, response.choices[0].text)
@@ -179,14 +171,12 @@ def get_answer_gsm8k(response):
             s = s.replace(ok_symbol, "")
         return s
 
-
 TASK_TO_ANSWER_EXTRACTOR = {
     "evals__mmlu__details": get_mmlu_answer,
     "evals__mmlu__0_shot__cot__details": get_mmlu_cot_answer,
     "evals__gsm8k__details": get_answer_gsm8k,
     "evals__mmlu_pro__details": get_mmlu_cot_answer,
 }
-
 
 def get_dataset_from_task(task, response_path, model_size):
     ds_405b = load_dataset(
@@ -217,7 +207,6 @@ def get_dataset_from_task(task, response_path, model_size):
         return ref_model_ds
 
     return ds_405b
-
 
 def analyze(task, response_path, model_size):
     ds = get_dataset_from_task(task, response_path, model_size)
@@ -274,7 +263,6 @@ def analyze(task, response_path, model_size):
     )
     print("Micro average", micro_stats.average)
     print("Meta Micro average", micro_stats.meta_average)
-
 
 # Entry point for the script
 if __name__ == "__main__":

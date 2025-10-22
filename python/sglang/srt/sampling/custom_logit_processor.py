@@ -13,6 +13,7 @@ def _cache_from_str(json_str: str):
     This function is cached to avoid redundant deserialization.
     """
     data = json.loads(json_str)
+    # 通过 dill 反序列化用户自定义 processor，实现跨进程传递可调用对象
     return dill.loads(bytes.fromhex(data["callable"]))
 
 
@@ -49,5 +50,6 @@ class DisallowedTokensLogitsProcessor(CustomLogitProcessor):
         assert all(
             disallowed_token_ids == c["token_ids"] for c in custom_param_list
         ), f"{custom_param_list=}"
+        # 直接将禁用 token 的对数概率置为 -inf，确保采样阶段永远不会被选中
         logits[..., disallowed_token_ids] = -float("inf")
         return logits

@@ -11,7 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Common utilities."""
+"""
+SGLang运行时通用工具模块
+这个模块包含了SGLang运行时系统使用的各种工具函数，包括：
+- 系统信息获取
+- 内存管理
+- 网络通信
+- 文件操作
+- 性能监控
+- 错误处理
+"""
 
 from __future__ import annotations
 
@@ -94,7 +103,6 @@ logger = logging.getLogger(__name__)
 
 show_time_cost = False
 time_infos = {}
-
 
 HIP_FP8_E4M3_FNUZ_MAX = 224.0
 
@@ -368,6 +376,7 @@ def get_available_gpu_memory(
     Get available memory for cuda:gpu_id device.
     When distributed is True, the available memory is the minimum available memory of all GPUs.
     """
+    # 根据不同后端选择查询接口，同时在分布式场景下取各 rank 的最小值作为真实可用显存
     if device == "cuda":
         num_gpus = torch.cuda.device_count()
         assert gpu_id < num_gpus
@@ -425,6 +434,7 @@ def get_available_gpu_memory(
         free_gpu_memory, total_gpu_memory = torch.npu.mem_get_info()
 
     if distributed:
+        # 利用 all_reduce(MIN) 汇总各 rank 的剩余显存，避免局部判断导致 OOM
         tensor = torch.tensor(free_gpu_memory, dtype=torch.float32)
         torch.distributed.all_reduce(
             tensor, op=torch.distributed.ReduceOp.MIN, group=cpu_group

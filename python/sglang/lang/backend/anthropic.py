@@ -8,7 +8,6 @@ try:
 except ImportError as e:
     anthropic = e
 
-
 class Anthropic(BaseBackend):
     def __init__(self, model_name, *args, **kwargs):
         super().__init__()

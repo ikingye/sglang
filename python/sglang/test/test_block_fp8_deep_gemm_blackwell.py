@@ -10,15 +10,12 @@ from sglang.test.test_utils import CustomTestCase
 
 _is_cuda = torch.cuda.is_available() and torch.version.cuda
 
-
 # Modify form DeepGEMM Blackwell
 def ceil_div(x: int, y: int) -> int:
     return (x + y - 1) // y
 
-
 def align(x: int, y: int) -> int:
     return ceil_div(x, y) * y
-
 
 def per_token_group_quant_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2 and x.size(1) % 128 == 0
@@ -27,7 +24,6 @@ def per_token_group_quant_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tens
     x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
     sf = x_amax / 448.0
     return (x_view * (1.0 / sf.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), sf
-
 
 def per_block_quant_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2
@@ -44,11 +40,9 @@ def per_block_quant_fp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x_view.size(0), x_view.size(2)
     )
 
-
 def ceil_to_ue8m0(x: torch.Tensor):
     assert x.view(-1).amax().item() > 0
     return torch.pow(2.0, torch.ceil(torch.log2(x.abs())))
-
 
 def per_token_group_quant_mxfp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2 and x.size(1) % 128 == 0
@@ -57,7 +51,6 @@ def per_token_group_quant_mxfp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Te
     x_amax = x_view.abs().float().amax(dim=2).view(m, -1).clamp(1e-4)
     sf = ceil_to_ue8m0(x_amax / 448.0)
     return (x_view * (1.0 / sf.unsqueeze(2))).to(torch.float8_e4m3fn).view(m, n), sf
-
 
 def per_block_quant_mxfp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     assert x.dim() == 2
@@ -73,7 +66,6 @@ def per_block_quant_mxfp8(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     return x_scaled.view_as(x_padded)[:m, :n].contiguous(), sf.view(
         x_view.size(0), x_view.size(2)
     )
-
 
 # For test
 def native_w8a8_block_fp8_matmul(A, B, As, Bs, block_size, output_dtype=torch.float16):
@@ -130,7 +122,6 @@ def native_w8a8_block_fp8_matmul(A, B, As, Bs, block_size, output_dtype=torch.fl
     C = C.reshape(origin_C_shape).to(output_dtype)
     return C
 
-
 def block_quant_dequant(
     x_q_block: torch.Tensor,
     x_s: torch.Tensor,
@@ -165,9 +156,7 @@ def block_quant_dequant(
 
     return x_dq_block
 
-
 class TestDeepGemmBlackwell(CustomTestCase):
-
     if not _is_cuda:
         OUT_DTYPES = [torch.float32, torch.half, torch.bfloat16]
         M = [1, 7, 83, 512, 2048]
@@ -246,7 +235,6 @@ class TestDeepGemmBlackwell(CustomTestCase):
                 seed=params[4],
             ):
                 self._test_deep_gemm_blackwell(*params)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

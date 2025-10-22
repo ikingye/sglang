@@ -1,4 +1,11 @@
-"""Common utilities"""
+"""通用工具函数模块
+这个模块包含了SGLang系统中使用的各种通用工具函数，包括：
+- 装饰器函数
+- 数据处理工具
+- 网络请求工具
+- 文件操作工具
+- 类型转换工具
+"""
 
 import importlib
 import json
@@ -28,8 +35,22 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
-
 def execute_once(func):
+    """
+    装饰器：确保函数只执行一次
+
+    这个装饰器用于包装那些只需要执行一次的函数，比如初始化操作。
+    使用场景包括：
+    - 全局配置初始化
+    - 资源加载
+    - 一次性设置操作
+
+    Args:
+        func: 要被装饰的函数
+
+    Returns:
+        装饰后的函数，只会执行一次
+    """
     has_run = None
 
     @wraps(func)
@@ -41,26 +62,40 @@ def execute_once(func):
 
     return wrapper
 
-
 @execute_once
 def info_once(message: str):
+    """
+    只记录一次信息日志
+
+    这个函数用于记录只需要显示一次的信息，避免重复日志输出。
+    常用于系统启动信息、配置信息等。
+
+    Args:
+        message: 要记录的信息消息
+    """
     logger.info(message)
 
-
 def convert_json_schema_to_str(json_schema: Union[dict, str, Type[BaseModel]]) -> str:
-    """Convert a JSON schema to a string.
-    Parameters
+    """
+    将JSON模式转换为字符串格式
+
+    这个函数用于将不同格式的JSON模式统一转换为字符串格式，
+    支持字典、字符串和Pydantic模型类三种输入类型。
+
+    参数
     ----------
-    json_schema
-        The JSON schema.
-    Returns
+    json_schema : Union[dict, str, Type[BaseModel]]
+        JSON模式，可以是字典、字符串或Pydantic模型类
+
+    返回
     -------
     str
-        The JSON schema converted to a string.
-    Raises
+        转换后的JSON模式字符串
+
+    异常
     ------
     ValueError
-        If the schema is not a dictionary, a string or a Pydantic class.
+        如果模式不是字典、字符串或Pydantic类，则抛出此异常
     """
     if isinstance(json_schema, dict):
         schema_str = json.dumps(json_schema)
@@ -76,21 +111,47 @@ def convert_json_schema_to_str(json_schema: Union[dict, str, Type[BaseModel]]) -
         )
     return schema_str
 
-
 def get_exception_traceback():
+    """
+    获取当前异常的完整追踪信息
+
+    这个函数用于获取当前正在处理的异常的完整堆栈追踪信息，
+    包括异常类型、异常值和完整的调用栈。
+
+    返回
+    -------
+    str
+        格式化的异常追踪字符串
+    """
+
     etype, value, tb = sys.exc_info()
+
     err_str = "".join(traceback.format_exception(etype, value, tb))
     return err_str
 
-
 def is_same_type(values: list):
-    """Return whether the elements in values are of the same type."""
+    """
+    检查列表中所有元素是否为相同类型
+
+    这个函数用于验证列表中的所有元素是否具有相同的数据类型，
+    常用于数据验证和类型检查。
+
+    参数
+    ----------
+    values : list
+        要检查的列表
+
+    返回
+    -------
+    bool
+        如果所有元素类型相同返回True，否则返回False
+    """
     if len(values) <= 1:
         return True
     else:
         t = type(values[0])
-        return all(isinstance(v, t) for v in values[1:])
 
+        return all(isinstance(v, t) for v in values[1:])
 
 def read_jsonl(filename: str):
     """Read a JSONL file."""
@@ -99,7 +160,6 @@ def read_jsonl(filename: str):
             if line.startswith("#"):
                 continue
             yield json.loads(line)
-
 
 def dump_state_text(filename: str, states: list, mode: str = "w"):
     """Dump program state in a text file."""
@@ -118,7 +178,6 @@ def dump_state_text(filename: str, states: list, mode: str = "w"):
                 "=" * 40 + f" {i} " + "=" * 40 + "\n" + s + "\n" + "=" * 80 + "\n\n"
             )
 
-
 class HttpResponse:
     def __init__(self, resp):
         self.resp = resp
@@ -129,7 +188,6 @@ class HttpResponse:
     @property
     def status_code(self):
         return self.resp.status
-
 
 def http_request(
     url,
@@ -161,7 +219,6 @@ def http_request(
         except urllib.error.HTTPError as e:
             return HttpResponse(e)
 
-
 def encode_image_base64(image_path: Union[str, bytes]):
     """Encode an image in base64."""
     if isinstance(image_path, str):
@@ -177,9 +234,8 @@ def encode_image_base64(image_path: Union[str, bytes]):
         image.save(buffered, format="PNG")
         return pybase64.b64encode(buffered.getvalue()).decode("utf-8")
 
-
 def encode_frame(frame):
-    import cv2  # pip install opencv-python-headless
+    import cv2
     from PIL import Image
 
     # Convert the frame to RGB (OpenCV uses BGR by default)
@@ -200,9 +256,8 @@ def encode_frame(frame):
     # Return the bytes of the frame
     return frame_bytes
 
-
 def encode_video_base64(video_path: str, num_frames: int = 16):
-    import cv2  # pip install opencv-python-headless
+    import cv2
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -246,7 +301,6 @@ def encode_video_base64(video_path: str, num_frames: int = 16):
 
     return video_base64
 
-
 def _is_chinese_char(cp: int):
     """Checks whether CP is the codepoint of a CJK character."""
     # This defines a "chinese character" as anything in the CJK Unicode block:
@@ -271,7 +325,6 @@ def _is_chinese_char(cp: int):
 
     return False
 
-
 def find_printable_text(text: str):
     """Returns the longest printable substring of text that contains only entire words."""
     # Borrowed from https://github.com/huggingface/transformers/blob/061580c82c2db1de9139528243e105953793f7a2/src/transformers/generation/streamers.py#L99
@@ -289,7 +342,6 @@ def find_printable_text(text: str):
     # which may change with the subsequent token -- there are probably smarter ways to do this!)
     else:
         return text[: text.rfind(" ") + 1]
-
 
 class LazyImport:
     """Lazy import to make `import sglang` run faster."""
@@ -312,7 +364,6 @@ class LazyImport:
     def __call__(self, *args, **kwargs):
         module = self._load()
         return module(*args, **kwargs)
-
 
 def download_and_cache_file(url: str, filename: Optional[str] = None):
     """Read and cache a file from a url."""
@@ -347,12 +398,10 @@ def download_and_cache_file(url: str, filename: Optional[str] = None):
 
     return filename
 
-
 def is_in_ci():
     from sglang.test.test_utils import is_in_ci
 
     return is_in_ci()
-
 
 def print_highlight(html_content: str):
     if is_in_ci():
@@ -361,9 +410,7 @@ def print_highlight(html_content: str):
     else:
         print(html_content)
 
-
 process_socket_map = weakref.WeakKeyDictionary()
-
 
 def reserve_port(host, start=30000, end=40000):
     """
@@ -385,7 +432,6 @@ def reserve_port(host, start=30000, end=40000):
             continue
     raise RuntimeError("No free port available.")
 
-
 def release_port(lock_socket):
     """
     Release the reserved port by closing the lock socket.
@@ -395,7 +441,6 @@ def release_port(lock_socket):
     except Exception as e:
         print(f"Error closing socket: {e}")
 
-
 def execute_shell_command(command: str) -> subprocess.Popen:
     """
     Execute a shell command and return its process handle.
@@ -403,7 +448,6 @@ def execute_shell_command(command: str) -> subprocess.Popen:
     command = command.replace("\\\n", " ").replace("\\", " ")
     parts = command.split()
     return subprocess.Popen(parts, text=True, stderr=subprocess.STDOUT)
-
 
 def launch_server_cmd(command: str, host: str = "0.0.0.0", port: int = None):
     """
@@ -423,7 +467,6 @@ def launch_server_cmd(command: str, host: str = "0.0.0.0", port: int = None):
 
     return process, port
 
-
 def terminate_process(process):
     """
     Terminate the process and automatically release the reserved port.
@@ -435,7 +478,6 @@ def terminate_process(process):
     lock_socket = process_socket_map.pop(process, None)
     if lock_socket is not None:
         release_port(lock_socket)
-
 
 def wait_for_server(base_url: str, timeout: int = None) -> None:
     """Wait for the server to be ready by polling the /v1/models endpoint.
@@ -468,7 +510,6 @@ def wait_for_server(base_url: str, timeout: int = None) -> None:
         except requests.exceptions.RequestException:
             time.sleep(1)
 
-
 class TypeBasedDispatcher:
     def __init__(self, mapping: List[Tuple[Type, Callable]]):
         self._mapping = mapping
@@ -478,7 +519,6 @@ class TypeBasedDispatcher:
             if isinstance(obj, ty):
                 return fn(obj)
         raise ValueError(f"Invalid object: {obj}")
-
 
 def trim_overlap(existing_text, new_chunk):
     """
@@ -493,7 +533,6 @@ def trim_overlap(existing_text, new_chunk):
             break
     return new_chunk[max_overlap:]
 
-
 def stream_and_merge(llm, prompt, sampling_params):
     """
     1) Streams the text,
@@ -507,7 +546,6 @@ def stream_and_merge(llm, prompt, sampling_params):
         final_text += cleaned_chunk
     return final_text
 
-
 async def async_stream_and_merge(llm, prompt, sampling_params):
     """
     Streams tokens asynchronously, removes chunk overlaps,
@@ -520,7 +558,6 @@ async def async_stream_and_merge(llm, prompt, sampling_params):
         cleaned_chunk = trim_overlap(final_text, chunk_text)
         final_text += cleaned_chunk
         yield cleaned_chunk  # yield the non-overlapping portion
-
 
 def resolve_obj_by_qualname(qualname: str) -> Any:
     """

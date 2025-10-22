@@ -63,6 +63,7 @@ class BatchedMinNewTokensPenalizer(_BatchedPenalizer):
         )[
             :, : self.orchestrator.vocab_size
         ]
+        # 构造一个 stop token -> -inf 的查表，在未满足最小长度时屏蔽这些 token
 
         self.len_output_tokens = torch.zeros(
             size=(len(self.orchestrator.reqs()), 1),
@@ -75,6 +76,7 @@ class BatchedMinNewTokensPenalizer(_BatchedPenalizer):
 
     def _apply(self, logits: torch.Tensor):
         mask = (self.len_output_tokens < self.min_new_tokens).expand_as(logits)
+        # 尚未达到最短长度时，将 stop token 所在位置加上 -inf，从而禁止提前停止
         logits[mask] += self.stop_token_penalties[mask]
 
     def _filter(self, keep_indices: torch.Tensor):

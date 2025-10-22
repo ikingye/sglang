@@ -19,7 +19,6 @@ DEFAULT_MAX_TOTAL_TOKENS = 20480  # To allow multiple servers on the same machin
 
 _original_post_init = server_args_mod.ServerArgs.__post_init__
 
-
 def patched_post_init(self):
     _original_post_init(self)
     if self.max_running_requests is None:
@@ -28,11 +27,9 @@ def patched_post_init(self):
         self.max_total_tokens = DEFAULT_MAX_TOTAL_TOKENS
     self.cuda_graph_max_bs = 4
 
-
 server_args_mod.ServerArgs.__post_init__ = patched_post_init
 
 process_socket_map = weakref.WeakKeyDictionary()
-
 
 def launch_server_cmd(command: str, host: str = "0.0.0.0", port: int = None):
     """

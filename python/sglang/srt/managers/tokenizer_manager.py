@@ -11,7 +11,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""TokenizerManager is a process that tokenizes the text."""
+"""
+SGLang分词器管理器模块
+这个模块实现了SGLang的分词器管理功能，负责处理文本的tokenization和detokenization。
+
+TokenizerManager是一个独立的进程，通过ZeroMQ与主进程通信，
+提供高效的分词服务，支持批量处理和异步操作。
+"""
 
 import asyncio
 import copy
@@ -179,7 +185,7 @@ class TokenizerManager:
         server_args: ServerArgs,
         port_args: PortArgs,
     ):
-        # Parse args
+        # Parse args：记录指标、日志与首选采样参数，用于后续请求处理
         self.server_args = server_args
         self.enable_metrics = server_args.enable_metrics
         self.log_requests = server_args.log_requests
@@ -202,6 +208,7 @@ class TokenizerManager:
         self.max_req_input_len = None  # Will be set later in engine.py
 
         if self.model_config.is_multimodal:
+            # 多模态模型需加载 processor，并根据参数决定是否使用 fast 版
             import_processors()
             try:
                 _processor = get_processor(
@@ -254,7 +261,7 @@ class TokenizerManager:
                     revision=server_args.revision,
                 )
 
-        # Init inter-process communication
+        # Init inter-process communication：TokenizerManager 通过 ZeroMQ 与调度器/Detokenizer 互通
         context = zmq.asyncio.Context(2)
         self.recv_from_detokenizer = get_zmq_socket(
             context, zmq.PULL, port_args.tokenizer_ipc_name, True
@@ -313,6 +320,7 @@ class TokenizerManager:
         )
         # Start kv boostrap server on prefill
         if self.disaggregation_mode == DisaggregationMode.PREFILL:
+            # Prefill 模式需要额外的 bootstrap server 来分发 KV 数据
             # only start bootstrap server on prefill tm
             kv_bootstrap_server_class = get_kv_class(
                 self.disaggregation_transfer_backend, KVClassType.BOOTSTRAP_SERVER
@@ -341,6 +349,7 @@ class TokenizerManager:
 
         # Metrics
         if self.enable_metrics:
+            # 初始化 tokenizer 侧指标采集器，纪录首 token、全程延迟等分布
             self.metrics_collector = TokenizerMetricsCollector(
                 labels={
                     "model_name": self.server_args.served_model_name,
@@ -393,6 +402,7 @@ class TokenizerManager:
             self.send_to_scheduler, server_args.dp_size
         )
 
+        # 根据返回类型分发处理函数，既涵盖批量输出，也承接各类控制指令
         self._result_dispatcher = TypeBasedDispatcher(
             [
                 (
@@ -472,6 +482,7 @@ class TokenizerManager:
         request: Optional[fastapi.Request] = None,
     ):
         created_time = time.time()
+        # 确保处理协程已启动，随后标准化请求参数
         self.auto_create_handle_loop()
         obj.normalize_batch_and_arguments()
 
@@ -482,9 +493,11 @@ class TokenizerManager:
             )
 
         async with self.is_pause_cond:
+            # 若处于暂停状态，等待 continue_generation 唤醒
             await self.is_pause_cond.wait_for(lambda: not self.is_pause)
 
         async with self.model_update_lock.reader_lock:
+            # 单请求走 fast path；批量请求交给 _handle_batch_request 聚合处理
             if obj.is_single:
                 tokenized_obj = await self._tokenize_one_request(obj)
                 state = self._send_one_request(obj, tokenized_obj, created_time)
@@ -509,6 +522,7 @@ class TokenizerManager:
             isinstance(obj, EmbeddingReqInput) and obj.is_cross_encoder_request
         )
         if obj.input_embeds is not None:
+            # 直接输入 embedding 时要求禁用 radix cache，避免上下文索引错位
             if not self.server_args.disable_radix_cache:
                 raise ValueError(
                     "input_embeds is provided while disable_radix_cache is False. "
@@ -713,6 +727,7 @@ class TokenizerManager:
         self, batch_size: int, obj: Union[GenerateReqInput, EmbeddingReqInput]
     ) -> None:
         """Validate constraints for batch tokenization processing."""
+        # 批量 tokenization 仅适用于纯文本输入，混合/预 token/embedding 均需拒绝
         for i in range(batch_size):
             if self.is_generation and obj[i].contains_mm_input():
                 raise ValueError(
@@ -734,6 +749,7 @@ class TokenizerManager:
         created_time: Optional[float] = None,
     ):
         self.send_to_scheduler.send_pyobj(tokenized_obj)
+        # 为每个请求创建 ReqState，后续流式返回与指标统计都会引用
         state = ReqState([], False, asyncio.Event(), obj, created_time=created_time)
         self.rid_to_state[obj.rid] = state
         return state
@@ -747,6 +763,7 @@ class TokenizerManager:
         """Wait for the response of one request."""
         while True:
             try:
+                # 等待 scheduler 侧通过 state.event 通知有新的输出片段
                 await asyncio.wait_for(state.event.wait(), timeout=4)
             except asyncio.TimeoutError:
                 if (
@@ -826,6 +843,7 @@ class TokenizerManager:
         request: Optional[fastapi.Request] = None,
         created_time: Optional[float] = None,
     ):
+        # 根据配置选择批量 tokenization 或逐条串行处理，并聚合返回生成器
         batch_size = obj.batch_size
 
         generators = []
@@ -875,6 +893,7 @@ class TokenizerManager:
             )
 
             # Cache the common prefix for parallel sampling
+            # 为每个并行采样副本构造 n=0 的“缓存请求”，减少后续重复前缀计算
             for i in range(batch_size):
                 tmp_obj = copy.copy(objs[i])
                 tokenized_obj = copy.copy(tokenized_objs[i])
@@ -1516,6 +1535,7 @@ class TokenizerManager:
             BatchStrOut, BatchEmbeddingOut, BatchMultimodalOut, BatchTokenIDOut
         ],
     ):
+        # 根据 rid 找到对应的请求状态，拼装 meta 信息并推进流式队列
         for i, rid in enumerate(recv_obj.rids):
             state = self.rid_to_state.get(rid, None)
             if state is None:
@@ -1620,6 +1640,7 @@ class TokenizerManager:
         recv_obj: BatchStrOut,
         recv_obj_index: int,
     ):
+        # 将调度层的 logprob 索引转换为 TokenizerManager 所需的字符串/ID 形式
         if recv_obj.input_token_logprobs_val is None:
             return
 
@@ -1826,6 +1847,7 @@ class TokenizerManager:
     def _handle_abort_req(self, recv_obj):
         if is_health_check_generate_req(recv_obj):
             return
+        # scheduler 主动中止请求时推送一个空输出并唤醒监听协程
         state = self.rid_to_state[recv_obj.rid]
         state.finished = True
         if recv_obj.finished_reason:
@@ -1852,11 +1874,13 @@ class TokenizerManager:
         state.event.set()
 
     def _handle_open_session_req_output(self, recv_obj):
+        # Session handshake 完成，唤醒等待的客户端
         self.session_futures[recv_obj.session_id].set_result(
             recv_obj.session_id if recv_obj.success else None
         )
 
     def _handle_update_weights_from_disk_req_output(self, recv_obj):
+        # 权重更新完成后通知等待中的 future；DP>1 时需收集全部结果
         if self.server_args.dp_size == 1:
             self.model_update_result.set_result(recv_obj)
         else:  # self.server_args.dp_size > 1
@@ -1889,6 +1913,7 @@ class TokenizerManager:
                     )
 
         # Handle string or tokenized query/items
+        # 根据输入类型（字符串 / 已 token）生成评分 prompt
         if isinstance(query, str) and (
             isinstance(items, str)
             or (isinstance(items, list) and (not items or isinstance(items[0], str)))

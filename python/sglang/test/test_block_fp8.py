@@ -19,7 +19,6 @@ from sglang.test.test_utils import CustomTestCase
 
 _is_cuda = torch.cuda.is_available() and torch.version.cuda
 
-
 # For test
 def native_per_token_group_quant_fp8(
     x, group_size, eps=1e-10, dtype=torch.float8_e4m3fn
@@ -47,7 +46,6 @@ def native_per_token_group_quant_fp8(
     x_s = x_s.reshape(x.shape[:-1] + (x.shape[-1] // group_size,))
 
     return x_q, x_s
-
 
 class TestPerTokenGroupQuantFP8(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16, torch.float32]
@@ -93,7 +91,6 @@ class TestPerTokenGroupQuantFP8(CustomTestCase):
             ):
                 self._per_token_group_quant_fp8(*params)
 
-
 # For test
 def native_static_quant_fp8(x, x_s, dtype=torch.float8_e4m3fn):
     """Function to perform static quantization on an input tensor `x` using native torch.
@@ -114,7 +111,6 @@ def native_static_quant_fp8(x, x_s, dtype=torch.float8_e4m3fn):
     x_q = x_q.reshape(x.shape)
 
     return x_q, x_s
-
 
 class TestStaticQuantFP8(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16, torch.float32]
@@ -157,7 +153,6 @@ class TestStaticQuantFP8(CustomTestCase):
                 seed=params[3],
             ):
                 self._static_quant_fp8(*params)
-
 
 class TestPerTensorQuantMlaFP8(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16, torch.float32]
@@ -212,7 +207,6 @@ class TestPerTensorQuantMlaFP8(CustomTestCase):
                 seed=params[5],
             ):
                 self._per_tensor_quant_mla_fp8(*params)
-
 
 class TestPerTokenGroupQuantMlaDeepGemmMaskedFP8(CustomTestCase):
     DTYPES = [torch.half, torch.bfloat16, torch.float32]
@@ -269,7 +263,6 @@ class TestPerTokenGroupQuantMlaDeepGemmMaskedFP8(CustomTestCase):
             ):
                 self._per_token_group_quant_mla_deep_gemm_masked_fp8(*params)
 
-
 # For test
 def native_w8a8_block_fp8_matmul(A, B, As, Bs, block_size, output_dtype=torch.float16):
     """This function performs matrix multiplication with block-wise quantization using native torch.
@@ -325,9 +318,7 @@ def native_w8a8_block_fp8_matmul(A, B, As, Bs, block_size, output_dtype=torch.fl
     C = C.reshape(origin_C_shape).to(output_dtype)
     return C
 
-
 class TestW8A8BlockFP8Matmul(CustomTestCase):
-
     if not _is_cuda:
         OUT_DTYPES = [torch.float32, torch.half, torch.bfloat16]
         M = [1, 7, 83, 512, 2048]
@@ -414,7 +405,6 @@ class TestW8A8BlockFP8Matmul(CustomTestCase):
             ):
                 self._w8a8_block_fp8_matmul(*params)
 
-
 # For test
 def torch_w8a8_block_fp8_moe(a, w1, w2, w1_s, w2_s, score, topk, block_shape):
     """This function performs fused moe with block-wise quantization using native torch."""
@@ -446,7 +436,6 @@ def torch_w8a8_block_fp8_moe(a, w1, w2, w1_s, w2_s, score, topk, block_shape):
     return (
         out.view(B, -1, w2.shape[1]) * topk_weight.view(B, -1, 1).to(out.dtype)
     ).sum(dim=1)
-
 
 class TestW8A8BlockFP8FusedMoE(CustomTestCase):
     DTYPES = [torch.float32, torch.half, torch.bfloat16]
@@ -547,7 +536,6 @@ class TestW8A8BlockFP8FusedMoE(CustomTestCase):
             ):
                 self._w8a8_block_fp8_fused_moe(*params)
 
-
 # For test
 def torch_w8a8_block_fp8_bmm(a, a_s, w, w_s, block_shape, out_dtype):
     """This function performs bmm with block-wise quantization using native torch."""
@@ -562,7 +550,6 @@ def torch_w8a8_block_fp8_bmm(a, a_s, w, w_s, block_shape, out_dtype):
         )
 
     return out
-
 
 class TestW8A8BlockFP8BatchedDeepGemm(CustomTestCase):
     DTYPES = [torch.bfloat16]
@@ -636,7 +623,6 @@ class TestW8A8BlockFP8BatchedDeepGemm(CustomTestCase):
         )
 
     def test_w8a8_block_fp8_batched_deep_gemm(self):
-
         for params in itertools.product(
             self.M,
             self.N,
@@ -656,7 +642,6 @@ class TestW8A8BlockFP8BatchedDeepGemm(CustomTestCase):
                 seed=params[6],
             ):
                 self._w8a8_block_fp8_batched_deep_gemm(*params)
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

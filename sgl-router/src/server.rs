@@ -1,40 +1,52 @@
-use crate::config::RouterConfig;
-use crate::logging::{self, LoggingConfig};
-use crate::metrics::{self, PrometheusConfig};
-use crate::openai_api_types::{ChatCompletionRequest, CompletionRequest, GenerateRequest};
-use crate::routers::{RouterFactory, RouterTrait};
-use crate::service_discovery::{start_service_discovery, ServiceDiscoveryConfig};
-use axum::{
-    extract::{Query, Request, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router,
-};
-use reqwest::Client;
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::signal;
-use tokio::spawn;
-use tracing::{error, info, warn, Level};
+// SGLang路由器服务器模块
+// 这个模块实现了HTTP服务器，用于接收和路由推理请求
 
+use crate::config::RouterConfig;  // 路由器配置
+use crate::logging::{self, LoggingConfig};  // 日志配置
+use crate::metrics::{self, PrometheusConfig};  // 指标配置
+use crate::openai_api_types::{ChatCompletionRequest, CompletionRequest, GenerateRequest};  // OpenAI API类型
+use crate::routers::{RouterFactory, RouterTrait};  // 路由器工厂和特征
+use crate::service_discovery::{start_service_discovery, ServiceDiscoveryConfig};  // 服务发现
+use axum::{  // Axum Web框架
+    extract::{Query, Request, State},  // 请求提取器
+    http::StatusCode,  // HTTP状态码
+    response::{IntoResponse, Response},  // 响应类型
+    routing::{get, post},  // 路由方法
+    Json, Router,  // JSON和路由器
+};
+use reqwest::Client;  // HTTP客户端
+use std::collections::HashMap;  // 哈希映射
+use std::sync::atomic::{AtomicBool, Ordering};  // 原子布尔值
+use std::sync::Arc;  // 原子引用计数
+use std::time::Duration;  // 时间间隔
+use tokio::net::TcpListener;  // TCP监听器
+use tokio::signal;  // 信号处理
+use tokio::spawn;  // 异步任务生成
+use tracing::{error, info, warn, Level};  // 日志记录
+
+/// 应用程序上下文结构体
+/// 包含了应用程序的共享状态和配置
 #[derive(Clone)]
 pub struct AppContext {
-    pub client: Client,
-    pub router_config: RouterConfig,
-    pub concurrency_limiter: Arc<tokio::sync::Semaphore>,
-    // Future dependencies can be added here
+    pub client: Client,  // HTTP客户端，用于转发请求
+    pub router_config: RouterConfig,  // 路由器配置
+    pub concurrency_limiter: Arc<tokio::sync::Semaphore>,  // 并发限制器
+    // 未来可以在这里添加更多依赖项
 }
 
 impl AppContext {
+    /// 创建新的应用程序上下文
+    ///
+    /// 参数:
+    /// - router_config: 路由器配置
+    /// - client: HTTP客户端
+    /// - max_concurrent_requests: 最大并发请求数
     pub fn new(
         router_config: RouterConfig,
         client: Client,
         max_concurrent_requests: usize,
     ) -> Self {
+        // 创建并发限制器，用于控制同时处理的请求数量
         let concurrency_limiter = Arc::new(tokio::sync::Semaphore::new(max_concurrent_requests));
         Self {
             client,
@@ -44,10 +56,12 @@ impl AppContext {
     }
 }
 
+/// 应用程序状态结构体
+/// 包含了应用程序的运行时状态
 #[derive(Clone)]
 pub struct AppState {
-    pub router: Arc<dyn RouterTrait>,
-    pub context: Arc<AppContext>,
+    pub router: Arc<dyn RouterTrait>,  // 路由器实例
+    pub context: Arc<AppContext>,  // 应用程序上下文
 }
 
 // Fallback handler for unmatched routes

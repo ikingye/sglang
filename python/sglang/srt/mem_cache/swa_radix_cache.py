@@ -169,6 +169,7 @@ class LRUList:
         """
         Move a (existing) node to most recently used position
         """
+        # 普通节点直接移动到 head 右侧，保证最近访问优先保留
         assert node.id in self.cache, f"Resetting node {node.id=} not in lru list"
         assert (
             not self.swa or not node.swa_tombstone
@@ -181,6 +182,7 @@ class LRUList:
         Move an (existing) node and its parents to most recently used position. Child node is
         more recently used than parent node.
         """
+        # 自底向上将命中节点及其父节点按顺序插入 MRU，确保祖先顺位较低
         prev_node = self.head
         while node != root_node:
             # for swa lru list, only reset non-tombstone nodes
@@ -329,6 +331,7 @@ class LRUList:
 
             assert (
                 evictable_size == lru_list_evictable_size
+
             ), f"{self.swa=}, total nodes: {total_nodes}, total lru plus 1: {total_lru_plus_1}, evictable size: {evictable_size} != lru list evictable size: {lru_list_evictable_size}"
         except Exception as e:
             msg = f"SWA Radix tree sanity check failed, ping @hanming-lu: {e}"

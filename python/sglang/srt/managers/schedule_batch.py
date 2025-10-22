@@ -14,21 +14,22 @@ from __future__ import annotations
 # limitations under the License.
 # ==============================================================================
 """
-Store information about requests and batches.
+SGLang批处理调度模块
+这个模块存储请求和批次的信息，管理批处理的数据流。
 
-The following is the flow of data structures for a batch:
+批处理的数据结构流程如下：
 
 ScheduleBatch -> ModelWorkerBatch -> ForwardBatch
 
-- ScheduleBatch is managed by `scheduler.py::Scheduler`.
-  It contains high-level scheduling data. Most of the data is on the CPU.
-- ModelWorkerBatch is managed by `tp_worker.py::TpModelWorker`.
-  It is a subset of `ScheduleBatch` that only contains data related to the model forward on GPU.
-  It will be transformed from CPU scheduler to GPU model runner.
-- ForwardBatch is managed by `model_runner.py::ModelRunner`.
-  It contains low-level tensor data. Most of the data consists of GPU tensors.
+- ScheduleBatch由`scheduler.py::Scheduler`管理。
+  它包含高级调度数据，大部分数据在CPU上。
+- ModelWorkerBatch由`tp_worker.py::TpModelWorker`管理。
+  它是`ScheduleBatch`的子集，只包含与GPU模型前向相关的数据。
+  它将从CPU调度器转换为GPU模型运行器。
+- ForwardBatch由`model_runner.py::ModelRunner`管理。
+  它包含低级张量数据，大部分数据由GPU张量组成。
 
-TODO(lmzheng): ModelWorkerBatch seems a bit redundant and we consider removing it in the future.
+TODO(lmzheng): ModelWorkerBatch似乎有点冗余，我们考虑在未来移除它。
 """
 
 import copy
@@ -932,9 +933,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         chunked_req: Optional[Req] = None,
     ):
         return_logprob = any(req.return_logprob for req in reqs)
+        # 只要有请求需要返回对数概率，就在批次层面开启 logprob 流
 
         is_hybrid = False
         if isinstance(token_to_kv_pool_allocator, SWATokenToKVPoolAllocator):
+            # 进入 SWA 模式时需要特定的前缀缓存实现，才能在分页之间共享 KV
             assert (
                 tree_cache is None
                 or isinstance(tree_cache, SWARadixCache)
@@ -943,6 +946,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             is_hybrid = True
 
         return cls(
+            # 这里打包出 Scheduler 侧所需的批次状态，后续会逐步下沉到 GPU
             reqs=reqs,
             req_to_token_pool=req_to_token_pool,
             token_to_kv_pool_allocator=token_to_kv_pool_allocator,
@@ -967,6 +971,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         return len(self.reqs) == 0
 
     def alloc_req_slots(self, num_reqs: int):
+        # 请求槽位直接对应 req_to_token_pool 中的条目，会在解码阶段复用
         req_pool_indices = self.req_to_token_pool.alloc(num_reqs)
         if req_pool_indices is None:
             raise RuntimeError(
@@ -978,9 +983,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         return req_pool_indices
 
     def alloc_token_slots(self, num_tokens: int, backup_state: bool = False):
+        # 通用的 token 分配入口，先按需驱逐树缓存再尝试分配
         self._evict_tree_cache_if_needed(num_tokens)
 
         if backup_state:
+            # speculative 场景下需要先保存 allocator 状态，失败时可原路回滚
             state = self.token_to_kv_pool_allocator.backup_state()
 
         out_cache_loc = self.token_to_kv_pool_allocator.alloc(num_tokens)
@@ -999,6 +1006,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if backup_state:
             return out_cache_loc, state
         else:
+            # 正常路径直接返回 KV 页位置给后续批处理
             return out_cache_loc
 
     def alloc_paged_token_slots_extend(
@@ -1013,9 +1021,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             extend_num_tokens
             + len(seq_lens) * self.token_to_kv_pool_allocator.page_size
         )
+        # extend 场景既要腾出追加 token 的空间，也要保证每条序列整页对齐
         self._evict_tree_cache_if_needed(num_tokens)
 
         if backup_state:
+            # 预留巡视状态以支持回滚，避免 extend 分配失败污染现场
             state = self.token_to_kv_pool_allocator.backup_state()
 
         out_cache_loc = self.token_to_kv_pool_allocator.alloc_extend(
@@ -1033,6 +1043,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if backup_state:
             return out_cache_loc, state
         else:
+            # extend 分配成功后只需把页号交还给调用者
             return out_cache_loc
 
     def alloc_paged_token_slots_decode(
@@ -1043,6 +1054,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     ):
         num_tokens = len(seq_lens) * self.token_to_kv_pool_allocator.page_size
 
+        # decode 场景一次仅附加一个页面，驱逐策略按请求数估算页数
         self._evict_tree_cache_if_needed(num_tokens)
 
         if backup_state:
@@ -1061,9 +1073,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if backup_state:
             return out_cache_loc, state
         else:
+            # decode 同理返回页号即可
             return out_cache_loc
 
     def prepare_encoder_info_extend(self, input_ids: List[int], seq_lens: List[int]):
+        # 多模态模型需要把编码端的缓存从 decode token 中拆分出来
         self.encoder_lens_cpu = []
         self.encoder_cached = []
 
@@ -1076,6 +1090,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             else:
                 self.encoder_lens_cpu.append(im.num_image_tokens)
                 self.encoder_cached.append(
+                    # 解码阶段或已有前缀足够长时，可以直接复用图像编码结果
                     self.forward_mode.is_decode()
                     or len(req.prefix_indices) >= im.num_image_tokens
                 )
@@ -1137,14 +1152,17 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         ), f"Expected {len(self.out_cache_loc)}, got {self.extend_num_tokens}"
 
     def prepare_for_extend(self):
+        # Prefill 阶段的批构建：将 scheduler 聚合的请求转换为 GPU 可直接执行的张量
         self.forward_mode = ForwardMode.EXTEND
 
         # Allocate req slots
         bs = len(self.reqs)
+        # 每个请求在 ReqToTokenPool 中占用一个槽位，decode 时会复用
         req_pool_indices = self.alloc_req_slots(bs)
 
         # Init tensors
         reqs = self.reqs
+        # 所有 fill_ids = prefix + extend，新阶段只需要拼接待扩展部分
         input_ids = [r.fill_ids[len(r.prefix_indices) :] for r in reqs]
         extend_num_tokens = sum(len(ids) for ids in input_ids)
         seq_lens = [len(r.fill_ids) for r in reqs]
@@ -1156,6 +1174,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             r.token_type_ids for r in reqs if r.token_type_ids is not None
         ]
 
+        # 各类张量按需搬到 GPU，后续 ForwardBatch 会直接引用
         req_pool_indices_tensor = torch.tensor(req_pool_indices, dtype=torch.int64).to(
             self.device, non_blocking=True
         )
@@ -1190,6 +1209,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             assert seq_len - pre_len == req.extend_input_len
 
             if pre_len > 0:
+                # 将前缀 token 写入 KV 池，避免 Prefill 重算
                 self.req_to_token_pool.write(
                     (req.req_pool_idx, slice(0, pre_len)), req.prefix_indices
                 )
@@ -1220,6 +1240,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                 req.extend_logprob_start_len = 0
 
             if self.return_logprob:
+                # 计算需要回传的输入 logprob segment，注意溢出时用 0 填充
                 # Find input logprob token ids.
                 # First, find a global index within origin_input_ids and slide it by 1
                 # to compute input logprobs. It is because you need the next token
@@ -1266,6 +1287,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
 
         # Allocate memory
         if self.token_to_kv_pool_allocator.page_size == 1:
+            # 非分页 KV：一次性为所有追加 token 申请连续槽位
             out_cache_loc = self.alloc_token_slots(extend_num_tokens)
         else:
             last_loc = get_last_loc(
@@ -1273,6 +1295,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                 req_pool_indices_tensor,
                 prefix_lens_tensor,
             )
+            # 分页 KV：根据每条序列的末尾位置分配分页索引
             out_cache_loc = self.alloc_paged_token_slots_extend(
                 prefix_lens_tensor, seq_lens_tensor, last_loc, extend_num_tokens
             )
@@ -1313,6 +1336,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if support_triton(global_server_args_dict.get("attention_backend")):
             # TODO: some tensors can be reused for ForwardBatchInfo (e.g., extend_lens, cumsum_start)
 
+            # Triton 版本一次性写入 req_to_token_pool，避免 Python 循环
             write_req_to_token_pool_triton[(bs,)](
                 self.req_to_token_pool.req_to_token,
                 req_pool_indices_tensor,
@@ -1346,6 +1370,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         self.forward_mode = ForwardMode.SPLIT_PREFILL
 
     def mix_with_running(self, running_batch: "ScheduleBatch"):
+        # 混合模式：将新 Prefill 与上一轮尚未完成的 decode 批拼接，便于交错执行
         self.forward_mode = ForwardMode.MIXED
         running_bs = running_batch.batch_size()
 
@@ -1364,6 +1389,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         delta = 0 if self.enable_overlap else -1
 
         # NOTE: prefix_indices is what has been cached, but we don't cache each decode step
+        # 对于 decode 请求，将 prefix 视作当前实际长度（考虑 overlap 的延迟）
         self.prefix_lens.extend(
             [
                 len(r.origin_input_ids) + len(r.output_ids) + delta
@@ -1379,6 +1405,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         page_size = self.token_to_kv_pool_allocator.page_size
         if page_size == 1:
             return len(self.reqs)
+        # 分页 KV 缓存下需要统计下一步 decode 会申请多少新页面
         # In the decoding phase, the length of a request's KV cache should be
         # the total length of the request minus 1
         return (
@@ -1394,6 +1421,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             * self.token_to_kv_pool_allocator.page_size
         )
 
+        # 试探性地驱逐可缓存节点，判断剩余页数是否足以容纳下一步生成
         self._evict_tree_cache_if_needed(num_tokens)
         return self._is_available_size_sufficient(num_tokens)
 
@@ -1540,6 +1568,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         )
 
     def prepare_for_decode(self):
+        # Decode 阶段只生成 1 token，复用上一轮 Prefill 产生的 KV 与 sampling 信息
         self.forward_mode = ForwardMode.DECODE
         bs = len(self.reqs)
 
@@ -1551,6 +1580,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         if self.sampling_info.penalizer_orchestrator.is_required:
             if self.enable_overlap:
                 # TODO: this can be slow, optimize this.
+                # overlap 场景下 output_ids 会滞后一拍，因此取最后一个有效 token 更新惩罚器
                 delayed_output_ids = torch.tensor(
                     [
                         (
@@ -1594,21 +1624,25 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         # free memory
         if isinstance(self.tree_cache, SWAChunkCache):
             for req in self.reqs:
+                # 解码前释放旧的 SWA 页，避免混合窗口重复占用
                 self.tree_cache.evict_swa(
                     req, req.seqlen - 1, self.model_config.attention_chunk_size
                 )
 
         # Allocate memory
         if self.token_to_kv_pool_allocator.page_size == 1:
+            # 每条请求分配一个新 token 槽位
             self.out_cache_loc = self.alloc_token_slots(bs)
         else:
             last_loc = self.req_to_token_pool.req_to_token[
                 self.req_pool_indices, self.seq_lens - 2
             ]
+            # 分页模式：根据上一个 token 的页号定位新的写入位置
             self.out_cache_loc = self.alloc_paged_token_slots_decode(
                 self.seq_lens, last_loc
             )
 
+        # 将本轮追加的 token 索引写回 ReqToTokenPool，供下一次 forward 使用
         self.req_to_token_pool.write(
             (self.req_pool_indices, locs), self.out_cache_loc.to(torch.int32)
         )
@@ -1618,6 +1652,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
         chunked_req_to_exclude: Optional[Union[Req, List[Req]]] = None,
         keep_indices: Optional[List[int]] = None,
     ):
+        # 按条件剔除已完成或暂不处理的请求，保持批内状态一致
         if keep_indices is None:
             if isinstance(chunked_req_to_exclude, Req):
                 chunked_req_to_exclude = [chunked_req_to_exclude]
@@ -1714,6 +1749,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     def get_model_worker_batch(
         self, seq_lens_cpu_cache: Optional[torch.Tensor] = None
     ) -> ModelWorkerBatch:
+        # 将调度侧的 ScheduleBatch 转换为 TP worker 所需的 ModelWorkerBatch 表示
         if self.forward_mode.is_decode_or_idle():
             extend_seq_lens = extend_prefix_lens = extend_logprob_start_lens = None
         else:
@@ -1739,6 +1775,7 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             ]
             or global_server_args_dict["enable_two_batch_overlap"]
         ):
+            # 某些注意力后端需要 CPU 侧的 seq_lens 参与 kernel 参数或重叠计算
             seq_lens_cpu = (
                 seq_lens_cpu_cache
                 if seq_lens_cpu_cache is not None

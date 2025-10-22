@@ -46,6 +46,7 @@ class SamplingBatchInfo:
 
     # An event used for overlap schedule
     sampling_info_done: Optional[threading.Event] = None
+    # overlap 调度下用于唤醒后续 CPU 处理的事件，避免空转等待
 
     # Penalizer
     penalizer_orchestrator: Optional[penaltylib.BatchedPenalizerOrchestrator] = None
@@ -68,6 +69,7 @@ class SamplingBatchInfo:
 
     @classmethod
     def from_schedule_batch(cls, batch: ScheduleBatch, vocab_size: int):
+        # 从调度批次中收集采样相关的标量参数，并转换成 GPU 张量便于向量化处理
         reqs = batch.reqs
         device = batch.device
         temperatures = (
@@ -81,6 +83,7 @@ class SamplingBatchInfo:
         top_ps = torch.tensor(
             [r.sampling_params.top_p for r in reqs], dtype=torch.float
         ).to(device, non_blocking=True)
+        # top_k/top_p/min_p 等超参按批次堆叠后可直接进行逐元素裁剪
         top_ks = torch.tensor(
             [r.sampling_params.top_k for r in reqs], dtype=torch.int32
         ).to(device, non_blocking=True)
@@ -90,6 +93,7 @@ class SamplingBatchInfo:
 
         logit_bias = None
         if any(r.sampling_params.logit_bias is not None for r in reqs):
+            # 将每个请求的 logit bias 打包成 [bs, vocab] 矩阵，缺省位置保持 0
             logit_bias = torch.zeros(len(reqs), vocab_size, device=device)
             for i, r in enumerate(reqs):
                 if r.sampling_params.logit_bias is not None:
@@ -113,6 +117,7 @@ class SamplingBatchInfo:
                     processor_dict[processor_str] = []
                 processor_dict[processor_str].append(i)
 
+            # 将同类 processor 合并成 hash -> (processor 实例, mask) 的映射，避免重复反序列化
             merged_custom_logit_processor = {
                 hash(processor_str): (
                     # The deserialized custom logit processor object
@@ -136,6 +141,7 @@ class SamplingBatchInfo:
         # While we can choose not to even create the class instances if they are not required, this
         # could add additional complexity to the {ScheduleBatch} class, especially we need to
         # handle {filter_batch()} and {merge_batch()} cases as well.
+        # 惩罚器会按需检查采样参数，自行决定是否启用，避免在调度侧引入复杂条件
         penalizer_orchestrator = penaltylib.BatchedPenalizerOrchestrator(
             vocab_size=vocab_size,
             batch=batch,
@@ -178,6 +184,7 @@ class SamplingBatchInfo:
         first_grammar = next(grammar for grammar in self.grammars if grammar)
 
         # TODO(lianmin): Maybe we can reuse the existing mask?
+        # 为批量语法约束分配 vocab mask，方便后续在 GPU 上一次性过滤
         self.vocab_mask = first_grammar.allocate_vocab_mask(
             vocab_size=self.vocab_size,
             batch_size=len(self.temperatures),
@@ -190,6 +197,7 @@ class SamplingBatchInfo:
         # Apply the mask
         for i, grammar in enumerate(self.grammars):
             if grammar and not grammar.finished and not grammar.is_terminated():
+                # 仅对仍在进行的请求填充语法掩码
                 grammar.fill_vocab_mask(self.vocab_mask, i)
 
         # Move the mask to the device if needed
@@ -197,6 +205,7 @@ class SamplingBatchInfo:
 
     def update_penalties(self):
         if self.penalizer_orchestrator.is_required:
+            # 在重叠调度模式下提前把线性惩罚写进 buffer，后面直接加到 logits
             self.linear_penalty = torch.zeros(
                 (len(self.temperatures), self.vocab_size),
                 dtype=torch.float32,
@@ -219,9 +228,11 @@ class SamplingBatchInfo:
             self.apply_mask_func(logits=logits, vocab_mask=self.vocab_mask)
 
         if self.logit_bias is not None:
+            # 用户指定的 logit 偏置是最后一步叠加
             logits.add_(self.logit_bias)
 
     def filter_batch(self, keep_indices: List[int], keep_indices_device: torch.Tensor):
+        # 根据保留索引裁剪掉已完成的请求，同时维护各种附加结构
         self.penalizer_orchestrator.filter(keep_indices_device)
 
         if self.has_custom_logit_processor:
@@ -243,6 +254,7 @@ class SamplingBatchInfo:
         self, keep_indices: List[int], keep_indices_device: torch.Tensor
     ):
         """Filter the custom logit processor and custom params"""
+        # 只保留仍被当前批使用的 processor，同时收缩对应的请求掩码
         self.custom_logit_processor = {
             k: (p, mask[keep_indices_device])
             for k, (p, mask) in self.custom_logit_processor.items()
@@ -276,6 +288,7 @@ class SamplingBatchInfo:
 
         for k in keys:
             # Get the logit processor object
+            # 两边批次可能引用同一处理器，这里优先保留已有实例避免重复反序列化
             processor = lhs[k][0] if k in lhs else rhs[k][0]
             # Get and merge the mask tensors from the two dicts
             left_mask = (
@@ -300,6 +313,7 @@ class SamplingBatchInfo:
         return merged_dict
 
     def merge_batch(self, other: "SamplingBatchInfo"):
+        # 合并连续 batch 时，逐项拼接采样参数、掩码与惩罚器状态
         self.penalizer_orchestrator.merge(other.penalizer_orchestrator)
 
         # Merge the custom logit processors and custom params lists
@@ -373,14 +387,15 @@ def merge_bias_tensor(
 
     if lhs is not None and rhs is not None:
         return torch.cat([lhs, rhs])
-    else:
-        if lhs is not None:
-            shape, dtype = lhs.shape[1:], lhs.dtype
-        else:
-            shape, dtype = rhs.shape[1:], rhs.dtype
 
-        if lhs is None:
-            lhs = torch.empty((bs1, *shape), device=device, dtype=dtype).fill_(default)
-        if rhs is None:
-            rhs = torch.empty((bs2, *shape), device=device, dtype=dtype).fill_(default)
-        return torch.cat([lhs, rhs])
+    if lhs is not None:
+        shape, dtype = lhs.shape[1:], lhs.dtype
+    else:
+        shape, dtype = rhs.shape[1:], rhs.dtype
+
+    if lhs is None:
+        # 缺失的一侧需要补齐默认值，确保拼接后长度匹配
+        lhs = torch.empty((bs1, *shape), device=device, dtype=dtype).fill_(default)
+    if rhs is None:
+        rhs = torch.empty((bs2, *shape), device=device, dtype=dtype).fill_(default)
+    return torch.cat([lhs, rhs])

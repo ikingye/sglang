@@ -11,7 +11,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Sampling parameters for text generation."""
+"""
+SGLang文本生成采样参数模块
+这个模块定义了文本生成过程中使用的采样参数。
+
+SamplingParams类包含了控制文本生成质量和随机性的所有参数，
+包括温度、top-p、top-k、停止条件、约束生成等。
+"""
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -21,11 +27,19 @@ TOP_K_ALL = 1 << 30
 
 class SamplingParams:
     """
-    The sampling parameters.
+    SGLang文本生成采样参数类
 
-    See docs/backend/sampling_params.md or
+    这个类定义了文本生成过程中使用的所有采样参数，包括：
+    - 生成长度控制（max_new_tokens, min_new_tokens）
+    - 采样策略（temperature, top_p, top_k, min_p）
+    - 停止条件（stop, stop_token_ids, ignore_eos）
+    - 惩罚机制（frequency_penalty, presence_penalty, repetition_penalty）
+    - 约束生成（json_schema, regex, ebnf）
+    - 输出格式（skip_special_tokens, spaces_between_special_tokens）
+
+    详细文档请参考：
+    docs/backend/sampling_params.md 或
     https://docs.sglang.ai/backend/sampling_params.html
-    for the documentation.
     """
 
     def __init__(
@@ -54,19 +68,27 @@ class SamplingParams:
         stream_interval: Optional[int] = None,
         logit_bias: Optional[Dict[str, float]] = None,
     ) -> None:
+        """
+        初始化采样参数
+
+        设置所有采样相关的参数，并进行特殊情况的处理。
+        """
         self.max_new_tokens = max_new_tokens
         self.stop_strs = stop
         if stop_token_ids:
             self.stop_token_ids = set(stop_token_ids)
         else:
             self.stop_token_ids = None
+
         self.temperature = temperature
         self.top_p = top_p
         self.top_k = top_k
         self.min_p = min_p
+
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
         self.repetition_penalty = repetition_penalty
+
         self.min_new_tokens = min_new_tokens
         self.regex = regex
         self.n = n
@@ -74,20 +96,22 @@ class SamplingParams:
         self.ebnf = ebnf
         self.structural_tag = structural_tag
         self.ignore_eos = ignore_eos
+
         self.skip_special_tokens = skip_special_tokens
         self.spaces_between_special_tokens = spaces_between_special_tokens
         self.no_stop_trim = no_stop_trim
+
         self.custom_params = custom_params
         self.stream_interval = stream_interval
         self.logit_bias = logit_bias
 
-        # Process some special cases
         if 0 <= self.temperature < _SAMPLING_EPS:
-            # top_k = 1 means greedy sampling
+            # 极低温度视为贪心解，直接退化成 top-k=1 防止数值不稳定
             self.temperature = 1.0
             self.top_k = 1
         if self.top_k == -1:
-            self.top_k = TOP_K_ALL  # whole vocabulary
+            # -1 表示关闭截断，将上限替换为一个足够大的常量
+            self.top_k = TOP_K_ALL
 
     def verify(self, vocab_size):
         if self.temperature < 0.0:
@@ -132,6 +156,7 @@ class SamplingParams:
                     f"{self.min_new_tokens}."
                 )
         if self.logit_bias is not None:
+            # 校验 logit_bias 的键是否落在词表范围内
             for token_id in self.logit_bias:
                 if not 0 <= int(token_id) < vocab_size:
                     raise ValueError(
@@ -143,6 +168,7 @@ class SamplingParams:
             self.regex,
             self.ebnf,
         ]  # since mutually exclusive, only one can be set
+        # 多种约束互斥，仅允许设置其中一种
         if sum(x is not None for x in grammars) > 1:
             raise ValueError("Only one of regex, json_schema, or ebnf can be set.")
 
@@ -162,4 +188,5 @@ class SamplingParams:
                     stop_str_max_len = max(stop_str_max_len, len(stop_str_ids))
                 else:
                     stop_str_max_len = max(stop_str_max_len, len(stop_str))
+            # stop_str_max_len 记录需要保留的后缀长度，便于后续裁剪
             self.stop_str_max_len = stop_str_max_len
